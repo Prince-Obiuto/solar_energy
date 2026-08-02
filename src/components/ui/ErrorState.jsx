@@ -1,0 +1,2 @@
+import Button from "./Button";
+export default function ErrorState({ description = "Please try again in a moment.", onRetry, title = "Something went wrong" }) { return <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 text-center"><h2 className="text-lg font-semibold text-rose-900">{title}</h2><p className="mt-2 text-sm text-rose-700">{description}</p>{onRetry && <Button className="mt-4" onClick={onRetry}>Try again</Button>}</div>; }

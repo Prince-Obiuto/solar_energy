@@ -1,0 +1,3 @@
+import { useState } from "react";
+
+export default function Accordion({ items }) { const [openId, setOpenId] = useState(items[0]?.id); return <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 bg-white">{items.map((item) => <section key={item.id}><button aria-expanded={openId === item.id} className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left text-sm font-semibold text-gray-800" onClick={() => setOpenId((current) => current === item.id ? null : item.id)} type="button"><span>{item.title}</span><span className="text-gray-400">{openId === item.id ? "−" : "+"}</span></button>{openId === item.id && <div className="px-4 pb-4 text-sm leading-6 text-gray-600">{item.content}</div>}</section>)}</div>; }

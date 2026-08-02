@@ -1,0 +1,1 @@
+export const ENERGY_REFRESH_INTERVAL_MS = 3_000;

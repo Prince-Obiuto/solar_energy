@@ -1,0 +1,1 @@
+export default function Skeleton({ className = "", count = 1 }) { return <div className="space-y-3" aria-busy="true">{Array.from({ length: count }, (_, index) => <div className={`animate-pulse rounded-md bg-gray-200 ${className}`} key={index} />)}</div>; }
