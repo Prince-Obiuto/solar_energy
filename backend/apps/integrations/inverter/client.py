@@ -1,0 +1,1 @@
+"""Inverter communication client placeholder."""

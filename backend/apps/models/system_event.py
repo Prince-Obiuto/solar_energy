@@ -1,0 +1,1 @@
+"""System event persistence model."""

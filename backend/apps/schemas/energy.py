@@ -1,0 +1,1 @@
+"""Energy telemetry schemas."""

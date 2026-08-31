@@ -1,0 +1,1 @@
+"""Inverter protocol constants placeholder."""

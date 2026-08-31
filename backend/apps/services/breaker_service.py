@@ -1,0 +1,1 @@
+"""Smart breaker application service."""
