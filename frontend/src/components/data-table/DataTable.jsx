@@ -1,0 +1,32 @@
+import { ArrowDownTrayIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { useMemo, useState } from "react";
+
+function compareValues(left, right) { return String(left ?? "").localeCompare(String(right ?? ""), undefined, { numeric: true }); }
+
+export default function DataTable({ columns, data, exportLabel = "Export", filterOptions = [], pageSize = 8, searchable = true }) {
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState({});
+  const [sort, setSort] = useState(null);
+  const [page, setPage] = useState(1);
+  const [visibleColumns, setVisibleColumns] = useState(() => new Set(columns.map((column) => column.key)));
+  const [exportNotice, setExportNotice] = useState(false);
+  const visible = columns.filter((column) => visibleColumns.has(column.key));
+  const rows = useMemo(() => data.filter((row) => {
+    const matchesSearch = !query || columns.some((column) => String(column.searchValue?.(row) ?? row[column.key] ?? "").toLowerCase().includes(query.toLowerCase()));
+    const matchesFilters = filterOptions.every((filter) => !filters[filter.key] || filters[filter.key] === "all" || String(row[filter.key]) === filters[filter.key]);
+    return matchesSearch && matchesFilters;
+  }).sort((left, right) => !sort ? 0 : compareValues(left[sort.key], right[sort.key]) * sort.direction), [columns, data, filterOptions, filters, query, sort]);
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const activePage = Math.min(page, pages);
+  const pageRows = rows.slice((activePage - 1) * pageSize, activePage * pageSize);
+  const updateFilter = (key, value) => { setFilters((current) => ({ ...current, [key]: value })); setPage(1); };
+  const toggleSort = (key) => setSort((current) => current?.key === key ? { key, direction: current.direction * -1 } : { key, direction: 1 });
+  const toggleColumn = (key) => setVisibleColumns((current) => {
+    if (current.has(key) && current.size === 1) return current;
+    const next = new Set(current);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+
+  return <section className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-gray-100 p-4 lg:flex-row lg:items-center">{searchable && <label className="relative min-w-0 flex-1"><span className="sr-only">Search table</span><MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" /><input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-500" onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search" value={query} /></label>}{filterOptions.map((filter) => <select aria-label={filter.label} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700" key={filter.key} onChange={(event) => updateFilter(filter.key, event.target.value)} value={filters[filter.key] ?? "all"}><option value="all">All {filter.label}</option>{filter.options.map((option) => <option key={option} value={option}>{option}</option>)}</select>)}<details className="relative"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700"><ChevronDownIcon className="size-4" />Columns</summary><div className="absolute right-0 z-10 mt-2 w-48 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">{columns.map((column) => <label className="flex gap-2 rounded px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50" key={column.key}><input checked={visibleColumns.has(column.key)} onChange={() => toggleColumn(column.key)} type="checkbox" />{column.label}</label>)}</div></details><button className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={() => setExportNotice(true)} type="button"><ArrowDownTrayIcon className="size-4" />{exportLabel}</button></div>{exportNotice && <p className="border-b border-sky-100 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="status">Export is a placeholder; no file was created.</p>}<div className="overflow-x-auto"><table className="w-full min-w-160 text-left text-sm"><thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500"><tr>{visible.map((column) => <th aria-sort={sort?.key === column.key ? (sort.direction === 1 ? "ascending" : "descending") : "none"} className="px-4 py-3 font-semibold" key={column.key} scope="col"><button className="inline-flex items-center gap-1" disabled={column.sortable === false} onClick={() => toggleSort(column.key)} type="button">{column.label}{sort?.key === column.key && <span aria-hidden="true">{sort.direction === 1 ? "↑" : "↓"}</span>}</button></th>)}</tr></thead><tbody className="divide-y divide-gray-100">{pageRows.length ? pageRows.map((row, index) => <tr key={row.id ?? index}>{visible.map((column) => <td className="px-4 py-3 text-gray-700" key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>)}</tr>) : <tr><td className="px-4 py-8 text-center text-gray-500" colSpan={visible.length}>No matching results</td></tr>}</tbody></table></div><div className="flex flex-col gap-3 border-t border-gray-100 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"><span className="text-gray-500">{rows.length} results</span><div className="flex items-center gap-2"><button aria-label="Previous page" className="rounded border border-gray-200 p-1.5 disabled:opacity-40" disabled={activePage === 1} onClick={() => setPage(activePage - 1)} type="button"><ChevronLeftIcon className="size-4" /></button><span className="text-xs font-medium text-gray-600">Page {activePage} of {pages}</span><button aria-label="Next page" className="rounded border border-gray-200 p-1.5 disabled:opacity-40" disabled={activePage === pages} onClick={() => setPage(activePage + 1)} type="button"><ChevronRightIcon className="size-4" /></button></div></div></section>;
+}

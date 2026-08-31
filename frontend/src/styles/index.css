@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: #f9fafb;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  color: #1f2937;
+  font-family: var(--font-sans);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid #059669;
+  outline-offset: 2px;
+}
+
+/* Dark theme compatibility for the shared utility-based design language. */
+.dark {
+  color-scheme: dark;
+  background: #030712;
+}
+
+.dark body,
+.dark .bg-gray-50 {
+  background-color: #030712;
+  color: #e5e7eb;
+}
+
+.dark .bg-white {
+  background-color: #111827;
+}
+
+.dark .bg-gray-100 {
+  background-color: #1f2937;
+}
+
+.dark .bg-gray-200 {
+  background-color: #374151;
+}
+
+.dark .bg-gray-300 {
+  background-color: #4b5563;
+}
+
+.dark .text-gray-950,
+.dark .text-gray-900 {
+  color: #f9fafb;
+}
+
+.dark .text-gray-800,
+.dark .text-gray-700 {
+  color: #e5e7eb;
+}
+
+.dark .text-gray-600,
+.dark .text-gray-500 {
+  color: #9ca3af;
+}
+
+.dark .text-gray-400 {
+  color: #9ca3af;
+}
+
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300 {
+  border-color: #374151;
+}
+
+.dark input,
+.dark select,
+.dark textarea {
+  border-color: #374151;
+  background-color: #111827;
+  color: #f3f4f6;
+}
+
+.dark input:disabled,
+.dark select:disabled,
+.dark textarea:disabled {
+  background-color: #1f2937;
+  color: #9ca3af;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #6b7280;
+}
+
+.dark .bg-emerald-50,
+.dark .bg-emerald-100 {
+  background-color: #052e2b;
+}
+
+.dark .bg-sky-50,
+.dark .bg-sky-100 {
+  background-color: #082f49;
+}
+
+.dark .bg-amber-50,
+.dark .bg-amber-100 {
+  background-color: #451a03;
+}
+
+.dark .bg-rose-50,
+.dark .bg-rose-100 {
+  background-color: #4c0519;
+}
+
+.dark .bg-violet-100 {
+  background-color: #2e1065;
+}
+
+.dark .bg-teal-100 {
+  background-color: #042f2e;
+}
+
+.dark .text-emerald-950,
+.dark .text-emerald-900,
+.dark .text-emerald-800,
+.dark .text-emerald-700 {
+  color: #6ee7b7;
+}
+
+.dark .text-sky-900,
+.dark .text-sky-800,
+.dark .text-sky-700 {
+  color: #7dd3fc;
+}
+
+.dark .text-amber-900,
+.dark .text-amber-800,
+.dark .text-amber-700 {
+  color: #fcd34d;
+}
+
+.dark .text-rose-900,
+.dark .text-rose-800,
+.dark .text-rose-700 {
+  color: #fda4af;
+}
+
+.dark .text-violet-700,
+.dark .text-violet-600 {
+  color: #c4b5fd;
+}
+
+.dark .border-emerald-200,
+.dark .border-emerald-300,
+.dark .border-sky-100,
+.dark .border-sky-200,
+.dark .border-amber-200,
+.dark .border-amber-300,
+.dark .border-rose-200,
+.dark .border-rose-300 {
+  border-color: #4b5563;
+}
+
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+  background-color: #1f2937;
+}
+
+.dark .hover\:bg-emerald-50:hover {
+  background-color: #052e2b;
+}
+
+.dark .hover\:bg-rose-50:hover {
+  background-color: #4c0519;
+}
+
+.dark .recharts-cartesian-grid line {
+  stroke: #374151;
+}
+
+.dark .recharts-default-tooltip {
+  border-color: #374151 !important;
+  background-color: #111827 !important;
+  color: #f3f4f6 !important;
+}
+
+.dark .recharts-tooltip-label,
+.dark .recharts-legend-item-text {
+  color: #d1d5db !important;
+}
