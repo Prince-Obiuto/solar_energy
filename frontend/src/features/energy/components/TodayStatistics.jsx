@@ -18,7 +18,7 @@ export default function TodayStatistics({ statistics }) {
         {STAT_CONFIG.map(({ icon: Icon, key, label, prefix = "", suffix = "", tone }) => (
           <div className="rounded-lg bg-gray-50 p-3" key={key}>
             <Icon className={`size-4 ${tone}`} />
-            <p className="mt-3 text-xl font-bold text-gray-900">{prefix}{statistics[key]} {suffix}</p>
+            <p className="mt-3 text-xl font-bold text-gray-900">{statistics[key] == null ? "--" : `${prefix}${statistics[key]} ${suffix}`}</p>
             <p className="mt-1 text-xs text-gray-500">{label}</p>
           </div>
         ))}

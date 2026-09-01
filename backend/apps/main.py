@@ -1,13 +1,33 @@
 """FastAPI application entry point."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.router import api_router
 from apps.core.config import settings
+from apps.jobs.energy_collector import get_energy_collector
+from apps.realtime.manager import connection_manager
 
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Start and stop an optionally configured telemetry collector cleanly."""
+
+    collector = get_energy_collector()
+    await connection_manager.start()
+    if collector is not None:
+        await collector.start()
+    try:
+        yield
+    finally:
+        if collector is not None:
+            await collector.stop()
+        await connection_manager.stop()
+
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 if settings.app_env.lower() == "development":
     app.add_middleware(

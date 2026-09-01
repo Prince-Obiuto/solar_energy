@@ -9,6 +9,6 @@ const ICONS = {
 };
 
 export default function DeviceIcon({ type }) {
-  const Icon = ICONS[type];
+  const Icon = ICONS[type] || CpuChipIcon;
   return <span className="grid size-11 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><Icon className="size-6" /></span>;
 }

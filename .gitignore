@@ -26,3 +26,15 @@ dist-ssr
 
 **/__pycache__/
 *.pyc
+
+# Local backend configuration and hardware discovery artifacts
+/.env
+.env
+.env.*
+!.env.example
+**/devices.json
+**/snapshot.json
+**/tinytuya.json
+**/tuya-raw.json
+/backend/test.py
+/energy/

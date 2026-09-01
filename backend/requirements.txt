@@ -11,3 +11,6 @@ websockets
 python-multipart
 pytest
 pytest-asyncio
+tinytuya
+requests
+pycryptodome

@@ -4,6 +4,8 @@ import Loader from "../../../components/ui/Loader";
 import PageContainer from "../../../components/layout/PageContainer";
 import { Battery100Icon, BoltIcon, CheckCircleIcon, SunIcon } from "@heroicons/react/24/outline";
 import SectionHeading from "../../../components/ui/SectionHeading";
+import Alert from "../../../components/ui/Alert";
+import { formatKilowatts, formatPercentage } from "../../../utils/formatters";
 import useEnergyDashboard from "../hooks/useEnergyDashboard";
 import AreaConsumption from "./AreaConsumption";
 import EnergyFlow from "./EnergyFlow";
@@ -14,10 +16,10 @@ import SystemHealth from "./SystemHealth";
 import TodayStatistics from "./TodayStatistics";
 
 export default function EnergyDashboard() {
-  const { data, error, isLoading, refresh } = useEnergyDashboard();
+  const { data, error, isLoading, refresh, stale } = useEnergyDashboard();
 
   if (isLoading && !data) return <div className="flex min-h-48 items-center justify-center"><Loader label="Loading dashboard…" /></div>;
-  if (error) return <ErrorState description={error.message} onRetry={refresh} title="Unable to load the dashboard" />;
+  if (error && !data) return <ErrorState description={error.message} onRetry={refresh} title="Unable to load the dashboard" />;
   if (!data) {
     return <EmptyState description="Energy data will appear here when available." title="No energy data available" />;
   }
@@ -25,13 +27,15 @@ export default function EnergyDashboard() {
   return (
     <PageContainer>
       <SectionHeading as="h1" eyebrow="Renewable operations center" title="Smart Energy Overview" />
+      {error && <Alert>Live refresh failed. Showing the most recent available snapshot.</Alert>}
+      {stale && <Alert>Telemetry is stale. Live values may no longer represent current hardware state.</Alert>}
 
       <section aria-label="Key performance indicators" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard icon={SunIcon} label="PV Power" meta="Solar generation" tone="amber" value={`${data.solar.power} kW`} />
-        <KpiCard icon={Battery100Icon} label="Battery SOC" meta={data.battery.charging ? "Charging" : "Discharging"} tone="violet" value={`${data.battery.percentage}%`} />
-        <KpiCard icon={BoltIcon} label="Load Consumption" meta="Current demand" tone="sky" value={`${data.loads.totalPower} kW`} />
-        <KpiCard icon={BoltIcon} label="Grid Import" meta={data.grid.connected ? `${data.grid.voltage} V · ${data.grid.frequency} Hz` : "Grid unavailable"} tone="emerald" value={data.grid.connected ? `${data.grid.importPower} kW` : "Offline"} />
-        <KpiCard icon={CheckCircleIcon} label="System Status" meta="All components monitored" tone="teal" value={data.inverter.status} />
+        <KpiCard icon={SunIcon} label="PV Power" meta={data.solar.status || "PV status unavailable"} tone="amber" value={formatKilowatts(data.solar.power)} />
+        <KpiCard icon={Battery100Icon} label="Battery SOC" meta={data.battery.state || "Battery state unavailable"} tone="violet" value={formatPercentage(data.battery.percentage)} />
+        <KpiCard icon={BoltIcon} label="Load Consumption" meta="Area breaker demand" tone="sky" value={formatKilowatts(data.loads.totalPower)} />
+        <KpiCard icon={BoltIcon} label="Grid Power" meta={data.grid.connected == null ? "Grid status unavailable" : data.grid.connected ? `${data.grid.voltage} V · ${data.grid.frequency} Hz` : "Grid unavailable"} tone="emerald" value={formatKilowatts(data.grid.power)} />
+        <KpiCard icon={CheckCircleIcon} label="Inverter Status" meta={data.inverter.ratedPower == null ? "Rated power unavailable" : `${data.inverter.ratedPower} kW rated`} tone="teal" value={data.inverter.status || "--"} />
       </section>
 
       <EnergyFlow data={data} />

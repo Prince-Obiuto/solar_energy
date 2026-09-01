@@ -1,11 +1,17 @@
-const DEVICE_DATA = [
-  { id: "hybrid-inverter", name: "Hybrid Inverter", status: "Online", connection: "Ethernet", ipAddress: "192.168.10.21", lastSeen: "Just now", firmwareVersion: "v3.8.1", health: 98, temperature: 42, icon: "inverter" },
-  { id: "battery", name: "Battery", status: "Online", connection: "CAN Bus", ipAddress: "192.168.10.22", lastSeen: "Just now", firmwareVersion: "v2.4.6", health: 92, temperature: 29, icon: "battery" },
-  { id: "smart-breakers", name: "Smart Breakers", status: "Online", connection: "Wi-Fi", ipAddress: "192.168.10.35", lastSeen: "1 min ago", firmwareVersion: "v1.9.3", health: 96, temperature: 34, icon: "breakers" },
-  { id: "department-server", name: "Department Server", status: "Warning", connection: "Ethernet", ipAddress: "192.168.10.44", lastSeen: "3 min ago", firmwareVersion: "v5.2.0", health: 76, temperature: 57, icon: "server" },
-  { id: "network-switch", name: "Network Switch", status: "Online", connection: "Ethernet", ipAddress: "192.168.10.2", lastSeen: "Just now", firmwareVersion: "v1.4.8", health: 95, temperature: 38, icon: "switch" },
-];
+import axiosClient from "../../../services/http/axiosClient";
+import { TELEMETRY_STALE_AFTER_MS } from "../../../utils/constants";
 
-export function getDevices() {
-  return structuredClone(DEVICE_DATA);
+export async function getDevices() {
+  const { data } = await axiosClient.get("/devices");
+  return (data.items || []).map((device) => ({
+    id: device.id,
+    name: device.friendly_name,
+    type: device.type,
+    icon: device.type === "breaker" ? "breakers" : device.type,
+    status: !device.online ? "Offline" : device.last_seen && Date.now() - new Date(device.last_seen).getTime() > TELEMETRY_STALE_AFTER_MS ? "Stale" : "Online",
+    online: device.online,
+    area: device.area,
+    lastSeen: device.last_seen,
+    capabilities: device.capabilities || {},
+  }));
 }

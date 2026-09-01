@@ -1,13 +1,29 @@
-"""Tuya datapoint and command constants.
+"""Verified device metadata and TinyTuya error classifications.
 
-Keep any vendor datapoint names in this module only. Application code should not
-reference them directly.
+Datapoint mappings intentionally remain in ``mapper.py`` for Phase 4.
 """
 
-from __future__ import annotations
+TUYA_PRODUCT_NAME = "WIFl Smart Meter Pro"
+TUYA_MODEL = "TMPH"
+TUYA_CATEGORY = "znjdq"
+TUYA_PRODUCT_ID = "ruqchkg5f9loztw2"
+DEFAULT_PROTOCOL_VERSION = "3.5"
 
-SUPPORTED_SWITCH_STATES = {"on", "off", "open", "closed"}
-SUPPORTED_POWER_FIELDS = {"power_w", "power_watts", "power"}
-SUPPORTED_VOLTAGE_FIELDS = {"voltage_v", "voltage"}
-SUPPORTED_CURRENT_FIELDS = {"current_ma", "current_amps"}
+TINYTUYA_MALFORMED_ERROR_CODES = frozenset({"900", "904"})
+TINYTUYA_OFFLINE_ERROR_CODES = frozenset({"901", "905"})
+TINYTUYA_TIMEOUT_ERROR_CODES = frozenset({"902"})
 
+# Verified TMPH control allowlist. Calibration and unknown datapoints are
+# intentionally absent, making arbitrary writes impossible through this layer.
+DP_SWITCH = 1
+DP_COUNTDOWN = 9
+DP_RELAY_RESTORE_MODE = 38
+DP_INDICATOR_MODE = 40
+DP_CHILD_LOCK = 41
+CONTROL_DATAPOINTS = frozenset(
+    {DP_SWITCH, DP_COUNTDOWN, DP_RELAY_RESTORE_MODE, DP_INDICATOR_MODE, DP_CHILD_LOCK}
+)
+CALIBRATION_DATAPOINTS = frozenset({22, 23, 24, 25})
+UNEXPOSED_DATAPOINTS = frozenset({21, 26, 42})
+RELAY_RESTORE_MODES = frozenset({"off", "on", "memory"})
+INDICATOR_MODES = frozenset({"relay", "pos", "none", "on"})

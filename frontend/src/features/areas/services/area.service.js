@@ -1,39 +1,27 @@
-const AREA_DATA = [
-  {
-    id: "library-ict-hub",
-    name: "Library/ICT Hub",
-    breakerStatus: "On",
-    currentLoad: 0.82,
-    todayEnergy: 8.4,
-    voltage: 228.6,
-    current: 3.7,
-    powerFactor: 0.96,
-    lastUpdate: "Just now",
-  },
-  {
-    id: "upstairs",
-    name: "Upstairs",
-    breakerStatus: "On",
-    currentLoad: 0.63,
-    todayEnergy: 6.1,
-    voltage: 230.1,
-    current: 2.9,
-    powerFactor: 0.94,
-    lastUpdate: "2 min ago",
-  },
-  {
-    id: "downstairs",
-    name: "Downstairs",
-    breakerStatus: "Off",
-    currentLoad: 0,
-    todayEnergy: 3.8,
-    voltage: 229.4,
-    current: 0,
-    powerFactor: 0,
-    lastUpdate: "6 min ago",
-  },
-];
+import axiosClient from "../../../services/http/axiosClient";
+import { TELEMETRY_STALE_AFTER_MS } from "../../../utils/constants";
 
-export function getAreas() {
-  return structuredClone(AREA_DATA);
+export function mapBreakerToArea(breaker) {
+  const status = breaker.status || {};
+  const electrical = status.electrical || {};
+  return {
+    id: breaker.id,
+    name: breaker.area || breaker.friendly_name,
+    friendlyName: breaker.friendly_name,
+    breakerStatus: !breaker.online ? "Offline" : status.switch_on == null ? "Unknown" : status.switch_on ? "On" : "Off",
+    online: breaker.online,
+    currentLoad: electrical.active_power_watts == null ? null : electrical.active_power_watts / 1_000,
+    accumulatedEnergy: status.energy?.total_kwh ?? null,
+    voltage: electrical.voltage_volts ?? null,
+    current: electrical.current_amperes ?? null,
+    configuration: status.configuration ?? null,
+    capabilities: breaker.capabilities || {},
+    lastSeen: breaker.last_seen,
+    stale: Boolean(breaker.last_seen) && Date.now() - new Date(breaker.last_seen).getTime() > TELEMETRY_STALE_AFTER_MS,
+  };
+}
+
+export async function getAreas() {
+  const { data } = await axiosClient.get("/breakers");
+  return (data.items || []).map(mapBreakerToArea);
 }

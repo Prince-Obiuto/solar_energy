@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import Field
 
-from .device import DeviceFault, DeviceStatus, DeviceType, DomainModel
+from .device import DeviceCapability, DeviceFault, DeviceStatus, DeviceType, DomainModel
 from .energy_reading import ElectricalMeasurement, EnergyMeasurement
 
 
@@ -26,3 +27,15 @@ class BreakerStatus(DomainModel):
 
 
 BreakerState = BreakerStatus
+
+
+class BreakerDevice(DomainModel):
+    """Secret-free breaker registry and latest telemetry view."""
+
+    id: str = Field(min_length=1)
+    friendly_name: str = Field(min_length=1)
+    area: str = Field(min_length=1)
+    online: bool
+    last_seen: datetime | None = None
+    capabilities: DeviceCapability = Field(default_factory=DeviceCapability)
+    status: BreakerStatus

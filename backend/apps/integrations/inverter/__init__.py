@@ -1,8 +1,26 @@
 """Smart hybrid inverter integration package."""
 
 from .adapter import InverterAdapter
-from .client import InverterClient
-from .mapper import normalize_inverter_snapshot
+from .client import (
+    BeveAuthenticationError,
+    BeveClient,
+    BeveConfig,
+    BeveConnectionError,
+    BeveIncompleteResponseError,
+    BeveIntegrationError,
+    BeveMalformedResponseError,
+    BeveTimeoutError,
+    MockBeveClient,
+    VERIFIED_BEVE_RESPONSE,
+)
+from .mapper import BeveMappingError, map_beve_telemetry, normalize_inverter_snapshot
 
-__all__ = ["InverterAdapter", "InverterClient", "normalize_inverter_snapshot"]
+InverterClient = BeveClient
 
+__all__ = [
+    "BeveAuthenticationError", "BeveClient", "BeveConfig", "BeveConnectionError",
+    "BeveIncompleteResponseError", "BeveIntegrationError", "BeveMalformedResponseError",
+    "BeveMappingError", "BeveTimeoutError", "InverterAdapter", "InverterClient",
+    "MockBeveClient", "VERIFIED_BEVE_RESPONSE", "map_beve_telemetry",
+    "normalize_inverter_snapshot",
+]

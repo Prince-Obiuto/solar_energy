@@ -14,7 +14,7 @@ export default function AreaConsumption({ areas }) {
               <span className="text-gray-500">{formatKilowatts(area.consumption)}</span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100">
-              <div className={`h-full rounded-full ${area.color}`} style={{ width: `${area.share}%` }} />
+              <div className={`h-full rounded-full ${area.color}`} style={{ width: `${area.consumption == null ? 0 : area.share}%` }} />
             </div>
           </li>
         ))}

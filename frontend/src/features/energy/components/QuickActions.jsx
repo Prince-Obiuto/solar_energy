@@ -1,11 +1,10 @@
-import { AdjustmentsHorizontalIcon, ArrowPathIcon, DocumentChartBarIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, DocumentChartBarIcon } from "@heroicons/react/24/outline";
 
 import Card from "../../../components/ui/Card";
 import SectionHeading from "../../../components/ui/SectionHeading";
 
 const ACTIONS = [
   { label: "Refresh data", icon: ArrowPathIcon },
-  { label: "View controls", icon: AdjustmentsHorizontalIcon },
   { label: "Generate report", icon: DocumentChartBarIcon },
 ];
 

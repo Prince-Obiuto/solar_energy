@@ -15,11 +15,11 @@ function GridTowerIcon(props) {
 
 export default function EnergyFlow({ data }) {
   const nodes = {
-    solar: { active: data.solar.power > 0, detail: "Generating", icon: SunIcon, label: "PV Array", status: "online", tone: "bg-amber-100 text-amber-600", value: formatKilowatts(data.solar.power) },
-    battery: { active: data.battery.power > 0, detail: data.battery.charging ? `Charging ${formatKilowatts(data.battery.power)}` : `Discharging ${formatKilowatts(data.battery.power)}`, icon: Battery100Icon, label: "Battery", reverse: data.battery.charging, status: "online", tone: "bg-violet-100 text-violet-600", value: formatPercentage(data.battery.percentage) },
-    inverter: { detail: `Hybrid · ${data.inverter.status}`, icon: CpuChipIcon, label: "Inverter", status: data.inverter.status.toLowerCase(), tone: "bg-emerald-100 text-emerald-600", value: formatKilowatts(data.inverter.outputPower) },
+    solar: { active: data.solar.power > 0, detail: data.solar.status || "Status unavailable", icon: SunIcon, label: "PV Array", status: data.solar.status ? "online" : "unknown", tone: "bg-amber-100 text-amber-600", value: formatKilowatts(data.solar.power) },
+    battery: { active: data.battery.power != null && data.battery.power !== 0, detail: data.battery.state || "State unavailable", icon: Battery100Icon, label: "Battery", reverse: data.battery.charging, status: data.battery.state ? "online" : "unknown", tone: "bg-violet-100 text-violet-600", value: formatPercentage(data.battery.percentage) },
+    inverter: { detail: `Hybrid · ${data.inverter.status || "Unknown"}`, icon: CpuChipIcon, label: "Inverter", status: data.inverter.status?.toLowerCase() || "unknown", tone: "bg-emerald-100 text-emerald-600", value: formatKilowatts(data.inverter.outputPower) },
     loads: { active: data.loads.totalPower > 0, detail: "Consuming", icon: HomeModernIcon, label: "Site Loads", status: "online", tone: "bg-sky-100 text-sky-600", value: formatKilowatts(data.loads.totalPower) },
-    grid: { active: data.grid.connected && data.grid.power > 0, detail: data.grid.connected ? "Importing" : "Disconnected", icon: GridTowerIcon, label: "Utility Grid", reverse: true, status: data.grid.connected ? "online" : "offline", tone: "bg-teal-100 text-teal-600", value: formatKilowatts(data.grid.importPower) },
+    grid: { active: data.grid.connected && data.grid.power !== 0, detail: data.grid.connected == null ? "Status unavailable" : data.grid.connected ? "Available" : "Unavailable", icon: GridTowerIcon, label: "Utility Grid", reverse: true, status: data.grid.connected == null ? "unknown" : data.grid.connected ? "online" : "offline", tone: "bg-teal-100 text-teal-600", value: formatKilowatts(data.grid.power) },
   };
 
   return (
@@ -27,10 +27,10 @@ export default function EnergyFlow({ data }) {
       <SectionHeading action={<span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-700"><span className="size-2 animate-pulse rounded-full bg-emerald-500 motion-reduce:animate-none" />Live</span>} eyebrow="Real-time overview" title="Live Energy Flow" />
       <PowerFlowDiagram className="mx-auto mt-6 max-w-3xl" nodes={nodes} />
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-gray-100 pt-5 sm:grid-cols-4">
-        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid connection</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.connected ? "Connected" : "Disconnected"}</dd></div>
+        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid connection</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.connected == null ? "--" : data.grid.connected ? "Connected" : "Disconnected"}</dd></div>
         <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid import</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{formatKilowatts(data.grid.importPower)}</dd></div>
-        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid voltage</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.voltage} V</dd></div>
-        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid frequency</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.frequency} Hz</dd></div>
+        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid voltage</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.voltage == null ? "--" : `${data.grid.voltage} V`}</dd></div>
+        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid frequency</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.frequency == null ? "--" : `${data.grid.frequency} Hz`}</dd></div>
       </dl>
     </Card>
   );

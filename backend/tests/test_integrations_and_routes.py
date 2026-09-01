@@ -5,6 +5,8 @@ from apps.integrations.inverter.mapper import normalize_inverter_snapshot
 from apps.integrations.tuya.adapter import TuyaBreakerAdapter
 from apps.integrations.tuya.mapper import normalize_tuya_breaker_state
 from apps.models.device import DeviceStatus, DeviceType
+from apps.core.permissions import require_staff, require_student
+from apps.main import app
 
 
 def test_tuya_breaker_normalizer_maps_state_to_domain_model() -> None:
@@ -49,8 +51,13 @@ def test_vendor_adapters_build_domain_objects() -> None:
 
 
 def test_device_and_energy_routes_are_available(client) -> None:
-    devices = client.get("/api/v1/devices")
-    energy = client.get("/api/v1/energy")
+    app.dependency_overrides[require_staff] = lambda: None
+    app.dependency_overrides[require_student] = lambda: None
+    try:
+        devices = client.get("/api/v1/devices")
+        energy = client.get("/api/v1/energy")
+    finally:
+        app.dependency_overrides.clear()
 
     assert devices.status_code == 200
     assert devices.json()["items"] == []

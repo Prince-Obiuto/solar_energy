@@ -1,12 +1,33 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getAreas } from "../services/area.service";
+import { subscribeEnergyEvents } from "../../../services/realtime/energySocket";
 
 export default function useAreaMonitoring() {
-  const [areas] = useState(getAreas);
+  const [areas, setAreas] = useState([]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [view, setView] = useState("cards");
+
+  const refresh = useCallback(async () => {
+    try {
+      setAreas(await getAreas());
+      setError(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError : new Error("Unable to load area telemetry."));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial fetch and subsequent hardware event refreshes are external synchronization.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => subscribeEnergyEvents((message) => {
+    if (message.type.startsWith("breaker.") || message.type.startsWith("device.")) refresh();
+  }), [refresh]);
 
   const filteredAreas = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -18,5 +39,5 @@ export default function useAreaMonitoring() {
     });
   }, [areas, query, status]);
 
-  return { filteredAreas, query, setQuery, setStatus, setView, status, view };
+  return { filteredAreas, query, setQuery, setStatus, setView, status, view, error, loading, refresh };
 }

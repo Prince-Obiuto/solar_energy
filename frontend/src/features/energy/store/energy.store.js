@@ -4,6 +4,7 @@ const initialState = {
   data: null,
   error: null,
   status: "idle",
+  connectionStatus: "connecting",
 };
 
 const useEnergyStore = create((set) => ({

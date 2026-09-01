@@ -1,46 +1,40 @@
-const MOCK_ENERGY_DATA = {
-  solar: { power: 3.8, voltage: 360, current: 10.4 },
-  battery: { percentage: 82, voltage: 52.4, charging: true, power: 0.9 },
-  inverter: { status: "Online", outputPower: 2.7 },
-  grid: {
-    connected: true,
-    direction: "Importing",
-    power: 0.4,
-    importPower: 0.4,
-    voltage: 231.2,
-    frequency: 50,
-  },
-  loads: {
-    totalPower: 2.3,
-    zones: [
-      { id: 1, name: "Library", power: 0.8, breaker: true },
-      { id: 2, name: "Laboratory", power: 1.2, breaker: true },
-    ],
-  },
-  today: {
-    generated: 28.4,
-    consumed: 21.7,
-    imported: 5.6,
-    savings: 18.6,
-  },
-  alerts: [
-    { id: 1, title: "Battery charging normally", detail: "State of charge reached 82%.", time: "8 min ago", severity: "success" },
-    { id: 2, title: "High consumption detected", detail: "Laboratory demand is above its daily average.", time: "26 min ago", severity: "warning" },
-    { id: 3, title: "Grid supply available", detail: "The utility grid is supplementing site demand at 0.4 kW.", time: "1 hr ago", severity: "info" },
-  ],
-  areas: [
-    { id: 1, name: "Laboratory", consumption: 1.2, share: 52, color: "bg-violet-500" },
-    { id: 2, name: "Library", consumption: 0.8, share: 35, color: "bg-sky-500" },
-    { id: 3, name: "Administration", consumption: 0.3, share: 13, color: "bg-amber-500" },
-  ],
-  health: [
-    { id: 1, label: "PV Array", value: "Optimal", score: 96 },
-    { id: 2, label: "Battery Bank", value: "Healthy", score: 91 },
-    { id: 3, label: "Inverter", value: "Optimal", score: 98 },
-    { id: 4, label: "Grid Meter", value: "Connected", score: 95 },
-  ],
-};
+import axiosClient from "../../../services/http/axiosClient";
 
-export function getEnergySummary() {
-  return structuredClone(MOCK_ENERGY_DATA);
+const AREA_COLORS = ["bg-violet-500", "bg-sky-500", "bg-amber-500", "bg-emerald-500"];
+const wattsToKilowatts = (value) => value == null ? null : value / 1_000;
+
+export function mapEnergySnapshot(snapshot) {
+  const areaPower = snapshot.areas
+    ? snapshot.areas.map((area) => ({ id: area.device_id, name: area.area, consumption: wattsToKilowatts(area.power_w) }))
+    : (snapshot.breakers || []).map((breaker) => ({
+      id: breaker.id,
+      name: breaker.area || breaker.friendly_name,
+      consumption: wattsToKilowatts(breaker.status?.electrical?.active_power_watts),
+    }));
+  const knownLoads = areaPower.map((area) => area.consumption).filter((value) => value != null);
+  const totalPower = knownLoads.length ? knownLoads.reduce((sum, value) => sum + value, 0) : null;
+  const batteryStatus = snapshot.battery?.status?.toLowerCase() || "";
+  const gridConnected = snapshot.grid?.voltage == null ? null : snapshot.grid.voltage > 0;
+  return {
+    capturedAt: snapshot.system?.last_update || snapshot.captured_at,
+    solar: { power: wattsToKilowatts(snapshot.solar?.total_power_w), status: snapshot.solar?.connected, pv1Voltage: snapshot.solar?.pv1_voltage, pv1Power: wattsToKilowatts(snapshot.solar?.pv1_power_w), pv2Voltage: snapshot.solar?.pv2_voltage, pv2Power: wattsToKilowatts(snapshot.solar?.pv2_power_w) },
+    battery: { percentage: snapshot.battery?.soc, voltage: snapshot.battery?.voltage, charging: batteryStatus.includes("charging") && !batteryStatus.includes("discharging"), state: snapshot.battery?.status, power: wattsToKilowatts(snapshot.battery?.power_w) },
+    inverter: { status: snapshot.inverter?.status, ratedPower: wattsToKilowatts(snapshot.inverter?.rated_power_w), outputPower: wattsToKilowatts(snapshot.inverter?.output_power_w), loadPercentage: snapshot.inverter?.load_percentage },
+    grid: { connected: gridConnected, power: wattsToKilowatts(snapshot.grid?.power_w), importPower: wattsToKilowatts(snapshot.grid?.power_w), voltage: snapshot.grid?.voltage, frequency: snapshot.grid?.frequency },
+    loads: { totalPower, zones: areaPower },
+    today: { generated: snapshot.solar?.daily_energy_kwh, consumed: null, imported: null, savings: null },
+    alerts: [],
+    areas: areaPower.map((area, index) => ({ ...area, share: totalPower && area.consumption != null ? (area.consumption / totalPower) * 100 : 0, color: AREA_COLORS[index % AREA_COLORS.length] })),
+    health: [
+      { id: "solar", label: "PV Array", value: snapshot.solar?.connected || "N/A", online: snapshot.solar?.connected != null },
+      { id: "battery", label: "Battery Bank", value: snapshot.battery?.status || "N/A", online: snapshot.battery?.status != null },
+      { id: "inverter", label: "Inverter", value: snapshot.inverter?.status || "N/A", online: snapshot.inverter?.status != null },
+      { id: "grid", label: "Grid", value: gridConnected == null ? "N/A" : gridConnected ? "Connected" : "Unavailable", online: gridConnected === true },
+    ],
+  };
+}
+
+export async function getEnergySummary() {
+  const { data } = await axiosClient.get("/dashboard");
+  return mapEnergySnapshot(data);
 }

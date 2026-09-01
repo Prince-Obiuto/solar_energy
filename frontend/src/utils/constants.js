@@ -1,1 +1,2 @@
 export const ENERGY_REFRESH_INTERVAL_MS = 3_000;
+export const TELEMETRY_STALE_AFTER_MS = Number(import.meta.env.VITE_TELEMETRY_STALE_AFTER_MS || 120_000);

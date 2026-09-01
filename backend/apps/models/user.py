@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class UserRole(str, Enum):
+    STUDENT = "student"
+    STAFF = "staff"
+    ADMIN = "admin"
 
 
 @dataclass(slots=True)
@@ -13,6 +20,6 @@ class UserProfile:
     user_id: str
     email: str | None = None
     full_name: str | None = None
+    role: UserRole = UserRole.STUDENT
     is_active: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-

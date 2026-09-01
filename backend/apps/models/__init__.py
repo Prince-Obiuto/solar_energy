@@ -1,11 +1,12 @@
 """Normalized domain models shared by APIs, realtime, and persistence layers."""
 
-from .breaker import BreakerState, BreakerStatus
+from .breaker import BreakerDevice, BreakerState, BreakerStatus
 from .control_event import CommandResult, CommandStatus, DeviceCommand
 from .device import (
     Device,
     DeviceCapability,
     DeviceFault,
+    RegisteredDevice,
     DeviceSnapshot,
     DeviceStatus,
     DeviceType,
@@ -16,17 +17,24 @@ from .energy_reading import ElectricalMeasurement, EnergyMeasurement, EnergyRead
 from .inverter import (
     BatteryChargingState,
     BatteryStatus,
+    BatteryTelemetryStatus,
+    GridTelemetryStatus,
     GridState,
     GridStatus,
     InverterStatus,
+    InverterTelemetry,
+    InverterTelemetryStatus,
     PVStatus,
+    SolarTelemetryStatus,
 )
-from .user import UserProfile
+from .user import UserProfile, UserRole
 
 __all__ = [
-    "BatteryChargingState", "BatteryStatus", "BreakerState", "BreakerStatus",
+    "BatteryChargingState", "BatteryStatus", "BatteryTelemetryStatus", "BreakerDevice",
+    "BreakerState", "BreakerStatus",
     "CommandResult", "CommandStatus", "Device", "DeviceCapability", "DeviceCommand",
     "DeviceFault", "DeviceSnapshot", "DeviceStatus", "DeviceType", "DomainModel",
-    "ElectricalMeasurement", "EnergyMeasurement", "EnergyReading", "FaultSeverity",
-    "GridState", "GridStatus", "InverterStatus", "PVStatus", "UserProfile",
+    "ElectricalMeasurement", "EnergyMeasurement", "EnergyReading", "FaultSeverity", "RegisteredDevice",
+    "GridState", "GridStatus", "GridTelemetryStatus", "InverterStatus", "InverterTelemetry",
+    "InverterTelemetryStatus", "PVStatus", "SolarTelemetryStatus", "UserProfile", "UserRole",
 ]

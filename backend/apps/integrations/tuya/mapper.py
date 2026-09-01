@@ -25,8 +25,10 @@ def normalize_tuya_breaker_state(raw_state: Mapping[str, Any]) -> dict[str, Any]
         status = DeviceStatus.UNKNOWN.value
 
     current_ma = raw_state.get("current_ma")
-    voltage = raw_state.get("voltage_v") or raw_state.get("voltage")
-    power_watts = raw_state.get("power_w") or raw_state.get("power_watts")
+    voltage = raw_state.get("voltage_v") if "voltage_v" in raw_state else raw_state.get("voltage")
+    power_watts = (
+        raw_state.get("power_w") if "power_w" in raw_state else raw_state.get("power_watts")
+    )
 
     normalized = {
         "status": status,
@@ -38,4 +40,3 @@ def normalize_tuya_breaker_state(raw_state: Mapping[str, Any]) -> dict[str, Any]
 
 
 normalize_tuya_breaker_status = normalize_tuya_breaker_state
-

@@ -14,6 +14,7 @@ export default function RecentAlerts({ alerts }) {
     <Card>
       <SectionHeading action={<button className="text-sm font-medium text-emerald-700 hover:text-emerald-800" type="button">View all</button>} eyebrow="Notifications" title="Recent Alerts" />
       <ul className="mt-4 divide-y divide-gray-100">
+        {alerts.length === 0 && <li className="py-3 text-sm text-gray-500">No current alerts.</li>}
         {alerts.map(({ detail, id, severity, time, title }) => {
           const { icon: Icon, tone } = ALERT_STYLES[severity];
           return (

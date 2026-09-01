@@ -94,3 +94,15 @@ class Device(DomainModel):
 
 
 DeviceSnapshot = Device
+
+
+class RegisteredDevice(DomainModel):
+    """Secret-free device catalogue entry exposed by application services."""
+
+    id: str = Field(min_length=1)
+    friendly_name: str = Field(min_length=1)
+    type: DeviceType
+    area: str = Field(min_length=1)
+    online: bool
+    last_seen: datetime | None = None
+    capabilities: DeviceCapability = Field(default_factory=DeviceCapability)

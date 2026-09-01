@@ -1,13 +1,37 @@
-"""Inverter protocol constants placeholder.
+"""Verified read-only BEVE/Solar-of-Things protocol constants."""
 
-These constants are intentionally generic. Actual register names must be defined
-only in the deployed hardware integration and never spread into the application
-layer.
-"""
+DEFAULT_BASE_URL = "https://solar.siseli.com"
+LOGIN_PATH = "/apis/login/account"
+REFRESH_TOKEN_PATH = "/apis/login/refresh/access/token"
+DEVICE_LIST_PATH = "/apis/device/list"
+LATEST_STATE_PATH = "/apis/deviceState/simple/state/latest/v1"
+DEFAULT_TIMEOUT_SECONDS = 30.0
 
-from __future__ import annotations
-
-STATUS_VALUES = {"online", "offline", "normal", "fault", "running", "stopped"}
-POWER_FIELDS = {"grid_power_w", "grid_power_watts", "pv_power_w", "pv_power_watts"}
-BATTERY_FIELDS = {"battery_soc", "state_of_charge"}
-
+FIELD_KEYS = {
+    "workingStates",
+    "ratedActivePower",
+    "outputVoltage",
+    "outputFrequency",
+    "acOutputActivePower",
+    "loadPercentage",
+    "batteryCapacity",
+    "batteryVoltage",
+    "batteryChargingCurrent",
+    "batteryDischargeCurrent",
+    "batteryPower",
+    "batteryStatus",
+    "batteryChargeStep",
+    "batteryType",
+    "pvAccessSign",
+    "pvInputVoltage",
+    "pvInputPower",
+    "pv2InputVoltage",
+    "pv2InputPower",
+    "generationPower",
+    "pvGeneratedEnergyOfDay",
+    "pvGeneratedEnergyThisMonth",
+    "totalPVGeneratedEnergy",
+    "acInputVoltage",
+    "acInputFrequency",
+    "GridPower",
+}
