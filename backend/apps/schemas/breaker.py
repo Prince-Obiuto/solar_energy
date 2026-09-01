@@ -1,1 +1,5 @@
-"""Smart breaker request and response schemas."""
+"""Public imports for normalized breaker schemas."""
+
+from apps.models.breaker import BreakerStatus
+
+__all__ = ["BreakerStatus"]
