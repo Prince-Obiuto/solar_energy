@@ -76,6 +76,20 @@ def test_valid_login_and_current_user(auth_context) -> None:
         assert session.scalar(select(SystemEventRecord).where(SystemEventRecord.category == "auth.login.succeeded"))
 
 
+def test_login_cookie_authenticates_current_user(auth_context) -> None:
+    client, _ = auth_context
+
+    response = login(client, UserRole.ADMIN)
+
+    assert response.status_code == 200
+    assert "access_token" in response.cookies
+
+    current = client.get("/api/v1/auth/me")
+
+    assert current.status_code == 200
+    assert current.json()["role"] == "admin"
+
+
 def test_invalid_login_is_generic_and_audited(auth_context) -> None:
     client, factory = auth_context
     response = login(client, UserRole.STUDENT, "wrong-password")

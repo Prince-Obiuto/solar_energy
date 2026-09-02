@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Callable
 
-from fastapi import Depends, HTTPException, WebSocket, WebSocketException, status
+from fastapi import Cookie, Depends, HTTPException, WebSocket, WebSocketException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -26,9 +26,11 @@ def authentication_error() -> HTTPException:
 
 
 def get_current_user(
-    token: str | None = Depends(oauth2_scheme),
+    bearer_token: str | None = Depends(oauth2_scheme),
+    access_token: str | None = Cookie(default=None),
     session: Session = Depends(get_db),
 ) -> UserRecord:
+    token = bearer_token or access_token
     try:
         if token is None:
             raise InvalidTokenError
