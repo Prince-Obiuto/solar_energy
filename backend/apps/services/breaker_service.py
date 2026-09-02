@@ -130,4 +130,8 @@ _default_breaker_service = BreakerService()
 def get_breaker_service() -> BreakerService:
     """FastAPI dependency for the configured breaker service."""
 
+    from apps.core.runtime import get_application_runtime
+    runtime = get_application_runtime()
+    if runtime is not None:
+        return runtime.breaker_service
     return _default_breaker_service

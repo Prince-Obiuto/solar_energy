@@ -111,6 +111,8 @@ Backend variables are documented with safe placeholders in
   `ACCESS_TOKEN_EXPIRE_MINUTES`, initial-admin values.
 - BEVE: username, password, application identifiers, station/device identifiers,
   time zone and timeout. All use the `BEVE_` prefix.
+- TinyTuya: `TUYA_DEVICE_FILE`, local socket timeout, polling interval and
+  control verification delay. Secrets remain in the wizard-generated file.
 - Collection: independent BEVE/Tuya intervals, persistence interval, retry,
   stale, WebSocket and health-monitor timings.
 - Alerts: optional electrical threshold values. Blank means disabled.
@@ -159,30 +161,39 @@ tokens remain inside the integration client and are never serialized or logged.
 ## 10. Tuya breaker configuration
 
 The verified device is WIFl Smart Meter Pro / TMPH, category `znjdq`, protocol
-3.5. Each runtime registration requires device ID, friendly name, area, local
-key, IP address, protocol version, enabled state, and verified capabilities.
-Secrets must be injected through protected deployment configuration—not source,
-logs, API output, `devices.json`, or `snapshot.json`.
+3.5. Run the TinyTuya wizard on the backend host to produce `devices.json`, then
+set `TUYA_DEVICE_FILE` if it is not at `backend/devices.json`. At startup the
+application loads every valid TMPH entry, constructs an independent local-LAN
+client and breaker registration for each, and starts an independent collector
+loop. The list is variable-length; adding a supported breaker requires a wizard
+entry, not a Python change.
+
+`devices.json` contains local keys. It, `snapshot.json`, `tinytuya.json`,
+`tuya-raw.json`, and `.env` are recursively ignored and must never be committed,
+logged, returned by REST, or published by WebSocket. Normal monitoring uses only
+local TinyTuya communication and does not consume `tinytuya.json` cloud
+credentials. Configure DHCP reservations/static leases for deployed breakers;
+the saved IP is used directly and the backend does not scan the LAN on every
+poll.
 
 Only verified control DPs 1, 9, 38, 40 and 41 are allowlisted. Calibration DPs
 22–25 and unknown DPs 21, 26 and 42 cannot be written through the adapter.
 
 ## 11. Device onboarding
 
-1. Create the Area and Device persistence rows using an approved administrative
-   procedure.
-2. Obtain device identity/network secrets out of band and store them in the
-   protected server configuration.
-3. Confirm the device protocol and each capability against hardware.
-4. Construct the corresponding `TuyaDeviceConfig`, `TuyaClient`, and
-   `BreakerRegistration`; do not infer unsupported capabilities.
-5. Configure the application services/collector in the deployment composition.
-6. Verify normalized read-only telemetry before enabling ADMIN control.
-7. Test read-back verification and audit persistence under supervision.
+1. Run the TinyTuya wizard and confirm the local IP, protocol and TMPH identity.
+2. Keep its generated files readable only by the backend service account.
+3. Start the application. Missing Area and Device rows are provisioned
+   transactionally and idempotently before collection starts.
+4. Customize friendly names/areas in the database if required; existing values
+   are preferred on subsequent starts and are not overwritten.
+5. Verify normalized read-only telemetry before exercising ADMIN controls.
+6. Test read-back verification and audit persistence under supervision.
 
-There is currently no REST onboarding/configuration endpoint and no production
-composition loader for a variable-length breaker list. Deployment must supply
-that composition without committing secrets.
+FastAPI lifespan composes the environment-backed read-only BEVE client, every
+configured TinyTuya breaker, normalized services, persistence adapter, event
+publisher and collector. Development can start without hardware configuration;
+partially supplied BEVE settings fail with a sanitized configuration error.
 
 ## 12. REST endpoint inventory
 

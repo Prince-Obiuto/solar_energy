@@ -53,6 +53,10 @@ _default_energy_service = EnergyService(get_inverter_service(), get_breaker_serv
 def get_energy_service() -> EnergyService:
     """FastAPI dependency for unified current energy telemetry."""
 
+    from apps.core.runtime import get_application_runtime
+    runtime = get_application_runtime()
+    if runtime is not None:
+        return runtime.energy_service
     return _default_energy_service
 
 

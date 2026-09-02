@@ -125,7 +125,7 @@ class DashboardService:
                 voltage_v=breaker.status.electrical.voltage_volts,
                 current_a=breaker.status.electrical.current_amperes,
                 power_w=breaker.status.electrical.active_power_watts,
-                accumulated_energy=breaker.status.energy.total_kwh,
+                accumulated_energy=breaker.status.energy.accumulated_energy,
                 last_seen=breaker.last_seen,
             )
         devices = self.session.execute(

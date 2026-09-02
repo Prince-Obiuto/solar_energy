@@ -182,7 +182,7 @@ async def test_breaker_event_uses_normalized_fields_without_tuya_dps() -> None:
                 "current_amperes": 0.0,
                 "active_power_watts": 0.0,
             },
-            "energy": {"total_kwh": None},
+            "energy": {"accumulated_energy": None},
             "dps": {"1": True},
         },
     }

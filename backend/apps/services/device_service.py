@@ -92,6 +92,7 @@ class DeviceService:
                     connectivity_type=ConnectivityType.LOCAL,
                     data_source=DataSource.TINYTUYA,
                     data_status=breaker.data_status,
+                    relay_on=breaker.status.switch_on,
                     capabilities=breaker.capabilities,
                 )
             )
@@ -110,6 +111,10 @@ _default_device_service = DeviceService(get_inverter_service(), get_breaker_serv
 def get_device_service() -> DeviceService:
     """FastAPI dependency for the unified device catalogue."""
 
+    from apps.core.runtime import get_application_runtime
+    runtime = get_application_runtime()
+    if runtime is not None:
+        return runtime.device_service
     return _default_device_service
 
 

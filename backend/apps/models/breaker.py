@@ -27,6 +27,9 @@ class BreakerStatus(DomainModel):
     countdown_seconds: int | None = Field(default=None, ge=0)
     faults: list[DeviceFault] = Field(default_factory=list)
     configuration: dict[str, Any] | None = None
+    # Available to trusted persistence/diagnostics code, never serialized to
+    # REST or WebSocket consumers.
+    raw_datapoints: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 BreakerState = BreakerStatus

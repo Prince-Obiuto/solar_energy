@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     initial_admin_full_name: str = "System Administrator"
     beve_poll_interval_seconds: float = Field(default=30, gt=0)
     tuya_poll_interval_seconds: float = Field(default=10, gt=0)
+    tuya_device_file: Path = Path("devices.json")
+    tuya_socket_timeout_seconds: float = Field(default=5, gt=0, le=60)
     tuya_control_verify_delay_seconds: float = Field(default=0.5, ge=0, le=10)
     telemetry_persist_interval_seconds: float = Field(default=60, gt=0)
     device_stale_after_seconds: float = Field(default=90, gt=0)
@@ -49,6 +51,14 @@ class Settings(BaseSettings):
     backup_retention_days: int = Field(default=30, ge=1, le=3650)
     backup_command: str = "pg_dump"
     backup_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
+    beve_username: SecretStr | None = None
+    beve_password: SecretStr | None = None
+    beve_app_id: SecretStr | None = None
+    beve_app_secret_encrypted: SecretStr | None = None
+    beve_station_id: str | None = None
+    beve_device_id: str | None = None
+    beve_time_zone: str = "Africa/Lagos"
+    beve_timeout_seconds: float = Field(default=30, gt=0, le=120)
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

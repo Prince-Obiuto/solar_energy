@@ -13,6 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from apps.api.router import api_router
 from apps.core.config import settings
 from apps.core.logging import configure_logging
+from apps.core.runtime import build_application_runtime
 from apps.jobs.energy_collector import get_energy_collector
 from apps.jobs.health_monitor import health_monitor
 from apps.realtime.manager import connection_manager
@@ -22,6 +23,8 @@ from apps.realtime.manager import connection_manager
 async def lifespan(application: FastAPI):
     """Start and stop an optionally configured telemetry collector cleanly."""
 
+    if get_energy_collector() is None:
+        build_application_runtime()
     collector = get_energy_collector()
     await connection_manager.start()
     await health_monitor.start()

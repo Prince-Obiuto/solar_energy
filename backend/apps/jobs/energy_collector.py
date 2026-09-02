@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -28,6 +29,8 @@ from apps.models.persistence import (
 )
 from apps.services.breaker_service import BreakerService
 from apps.services.inverter_service import InverterService
+
+logger = logging.getLogger(__name__)
 
 
 class CollectorConfig(DomainModel):
@@ -167,8 +170,8 @@ class SQLAlchemyTelemetryPersistence:
                     voltage_v=breaker.status.electrical.voltage_volts,
                     current_a=breaker.status.electrical.current_amperes,
                     power_w=breaker.status.electrical.active_power_watts,
-                    accumulated_energy=breaker.status.energy.total_kwh,
-                    raw_datapoints=None,
+                    accumulated_energy=breaker.status.energy.accumulated_energy,
+                    raw_datapoints=breaker.status.raw_datapoints,
                 )
             )
 
@@ -469,6 +472,11 @@ class EnergyCollector:
         try:
             await self._run_sync(persist)
         except Exception:
+            logger.error("Telemetry persistence failed for source %s", source_id)
+            await self._publish(
+                "system.database_failure",
+                {"device_id": source_id, "timestamp": now, "failure_type": "persistence"},
+            )
             return
         self._last_persisted[source_id] = now
         if online is not None:

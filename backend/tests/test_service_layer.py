@@ -45,15 +45,10 @@ class MockTuyaClient:
         self.read_count += 1
         if self.offline:
             raise TuyaOfflineError("offline")
-        return {
-            "switch": "on",
-            "voltage_v": 0,
-            "current_ma": 0,
-            "power_w": 0,
-            "energy_total_kwh": 12.5,
-            "countdown_seconds": None,
-            "configuration": {"protection_enabled": True},
-        }
+        return {"dps": {
+            "1": True, "9": 0, "17": 1, "18": 0, "19": 0, "20": 0,
+            "38": "memory", "40": "relay", "41": False,
+        }}
 
 
 @pytest.fixture
@@ -108,8 +103,10 @@ def test_breaker_service_exposes_read_only_status_and_metadata(services) -> None
     assert breaker.status.electrical.voltage_volts == 0
     assert breaker.status.electrical.current_amperes == 0
     assert breaker.status.electrical.active_power_watts == 0
-    assert breaker.status.energy.total_kwh == 12.5
-    assert breakers.get_configuration(breaker.id) == {"protection_enabled": True}
+    assert breaker.status.energy.accumulated_energy == 0.001
+    assert breakers.get_configuration(breaker.id) == {
+        "relay_restore_mode": "memory", "indicator_mode": "relay", "child_lock": False,
+    }
     assert breakers.get_capabilities(breaker.id).switching is True
     assert breakers.is_online(breaker.id) is True
 
@@ -155,7 +152,7 @@ def test_energy_service_combines_beve_and_area_breaker_telemetry(services) -> No
     assert snapshot.solar.pv1_power_w == 0
     assert snapshot.grid.power_w == 0
     assert snapshot.breakers[0].area == "Library"
-    assert snapshot.breakers[0].status.energy.total_kwh == 12.5
+    assert snapshot.breakers[0].status.energy.accumulated_energy == 0.001
 
 
 def test_read_api_routes_use_injected_services(client: TestClient, services) -> None:

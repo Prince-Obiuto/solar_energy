@@ -30,32 +30,32 @@ class TuyaBreakerAdapter:
         *,
         config: TuyaDeviceConfig | None = None,
     ) -> BreakerState:
-        normalized = normalize_tuya_breaker_state(raw_state)
-        raw_status = str(raw_state.get("switch", raw_state.get("status", "unknown"))).lower()
-        switch_on: bool | None = None
-
-        status = DeviceStatus.UNKNOWN
-        if raw_status in {"on", "true", "1", "open"}:
-            status = DeviceStatus.ONLINE
-            switch_on = True
-        elif raw_status in {"off", "false", "0", "closed"}:
-            status = DeviceStatus.OFFLINE
-            switch_on = False
+        try:
+            normalized = normalize_tuya_breaker_state(raw_state)
+        except (TypeError, ValueError):
+            raise TuyaMalformedResponseError("Tuya returned malformed TMPH datapoints") from None
 
         breaker = BreakerState(
             device_id=config.device_id if config else str(raw_state.get("device_id", "unknown-breaker")),
             name=config.friendly_name if config else str(raw_state.get("name", "breaker")),
             device_type=DeviceType.BREAKER,
-            status=status,
-            switch_on=switch_on,
+            # A successfully received status envelope proves LAN reachability.
+            # Relay state is represented independently by switch_on.
+            status=DeviceStatus.ONLINE,
+            switch_on=normalized["switch_on"],
             electrical=ElectricalMeasurement(
-                current_amperes=normalized.get("current_amps"),
-                voltage_volts=normalized.get("voltage"),
-                active_power_watts=normalized.get("power_watts"),
+                current_amperes=normalized["current_amperes"],
+                voltage_volts=normalized["voltage_volts"],
+                active_power_watts=normalized["active_power_watts"],
             ),
-            energy=EnergyMeasurement(total_kwh=raw_state.get("energy_total_kwh")),
-            countdown_seconds=raw_state.get("countdown_seconds"),
-            configuration=raw_state.get("configuration"),
+            energy=EnergyMeasurement(accumulated_energy=normalized["accumulated_energy"]),
+            countdown_seconds=normalized["countdown_seconds"],
+            configuration={
+                "relay_restore_mode": normalized["relay_restore_mode"],
+                "indicator_mode": normalized["indicator_mode"],
+                "child_lock": normalized["child_lock"],
+            },
+            raw_datapoints=normalized["raw_datapoints"],
         )
         return breaker
 

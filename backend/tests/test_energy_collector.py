@@ -113,13 +113,11 @@ class FakePublisher:
 
 
 def breaker_payload(*, power: float = 0) -> dict[str, object]:
-    return {
-        "switch": "on",
-        "voltage_v": 0,
-        "current_ma": 0,
-        "power_w": power,
-        "energy_total_kwh": 0,
-    }
+    return {"dps": {
+        "1": True, "9": 0, "17": 0, "18": 0,
+        "19": int(power * 10), "20": 0,
+        "38": "memory", "40": "relay", "41": False,
+    }}
 
 
 def collector_config(**changes: Any) -> CollectorConfig:

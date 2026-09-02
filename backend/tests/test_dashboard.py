@@ -59,7 +59,7 @@ def breaker(device_id: str, area: str, *, online: bool, seen: datetime | None, p
             status=DeviceStatus.ONLINE if online else DeviceStatus.OFFLINE,
             switch_on=True if online else None,
             electrical={"voltage_volts": 0 if online else None, "current_amperes": 0 if online else None, "active_power_watts": power},
-            energy={"total_kwh": 0 if online else None},
+            energy={"accumulated_energy": 0 if online else None},
         ),
     )
 

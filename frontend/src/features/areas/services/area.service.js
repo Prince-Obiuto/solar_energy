@@ -11,7 +11,7 @@ export function mapBreakerToArea(breaker) {
     breakerStatus: !breaker.online ? "Offline" : status.switch_on == null ? "Unknown" : status.switch_on ? "On" : "Off",
     online: breaker.online,
     currentLoad: electrical.active_power_watts == null ? null : electrical.active_power_watts / 1_000,
-    accumulatedEnergy: status.energy?.total_kwh ?? null,
+    accumulatedEnergy: status.energy?.accumulated_energy ?? null,
     voltage: electrical.voltage_volts ?? null,
     current: electrical.current_amperes ?? null,
     configuration: status.configuration ?? null,

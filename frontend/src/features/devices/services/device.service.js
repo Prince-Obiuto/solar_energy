@@ -17,6 +17,7 @@ export async function getDevices() {
     connectivityType: device.connectivity_type,
     dataSource: device.data_source,
     dataStatus: device.data_status,
+    relayOn: device.relay_on,
     capabilities: device.capabilities || {},
   }));
 }

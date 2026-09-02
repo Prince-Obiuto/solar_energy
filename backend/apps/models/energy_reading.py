@@ -29,6 +29,9 @@ class EnergyMeasurement(DomainModel):
     exported_kwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     generated_kwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     consumed_kwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    # Neutral counter used where the hardware scale is verified but its
+    # engineering unit is not (currently Tuya TMPH DP17).
+    accumulated_energy: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class EnergyReading(DomainModel):

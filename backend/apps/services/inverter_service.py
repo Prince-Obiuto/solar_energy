@@ -83,4 +83,8 @@ _default_inverter_service = InverterService()
 def get_inverter_service() -> InverterService:
     """FastAPI dependency for the configured inverter service."""
 
+    from apps.core.runtime import get_application_runtime
+    runtime = get_application_runtime()
+    if runtime is not None:
+        return runtime.inverter_service
     return _default_inverter_service

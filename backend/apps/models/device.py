@@ -145,4 +145,5 @@ class RegisteredDevice(DomainModel):
     connectivity_type: ConnectivityType
     data_source: DataSource
     data_status: DataStatus
+    relay_on: bool | None = None
     capabilities: DeviceCapability = Field(default_factory=DeviceCapability)

@@ -24,6 +24,7 @@ export default function DeviceCard({ device }) {
         <DeviceMetric label="Area" value={device.area || "N/A"} />
         <DeviceMetric label="Connectivity" value={device.connectivityType || "N/A"} />
         <DeviceMetric label="Data source" value={device.dataSource || "N/A"} />
+        {device.type === "breaker" && <DeviceMetric label="Relay" value={device.relayOn == null ? "N/A" : device.relayOn ? "ON" : "OFF"} />}
       </dl>
       <div className="mt-5 rounded-lg bg-gray-50 p-3">
         <div className="flex items-center justify-between text-xs">

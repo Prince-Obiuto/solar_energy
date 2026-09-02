@@ -324,7 +324,7 @@ class TelemetryEventPublisher:
                     "voltage_v": electrical.get("voltage_volts"),
                     "current_a": electrical.get("current_amperes"),
                     "power_w": electrical.get("active_power_watts"),
-                    "accumulated_energy": energy.get("total_kwh"),
+                    "accumulated_energy": energy.get("accumulated_energy"),
                 },
             ),
             RealtimeMessage(

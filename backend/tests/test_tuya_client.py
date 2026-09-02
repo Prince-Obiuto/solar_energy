@@ -192,7 +192,7 @@ def test_adapter_returns_domain_identity_without_exposing_configuration(device_c
 
     assert breaker.device_id == device_config.device_id
     assert breaker.name == device_config.friendly_name
-    assert breaker.status is DeviceStatus.UNKNOWN
+    assert breaker.status is DeviceStatus.ONLINE
     assert TEST_LOCAL_KEY not in breaker.model_dump_json()
 
 
