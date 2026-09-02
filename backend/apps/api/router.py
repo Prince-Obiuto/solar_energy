@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from apps.api import alerts, auth, backups, breakers, controls, dashboard, devices, energy, inverter, logs, reports, users
+from apps.api import alerts, auth, backups, breakers, controls, dashboard, devices, energy, inverter, load_management, logs, reports, users
 from apps.core.config import settings
 from apps.core.permissions import require_admin, require_staff, require_student
 from apps.realtime.websocket import router as websocket_router
@@ -31,6 +31,7 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"], dependencies=[Depends(require_staff)])
 api_router.include_router(energy.router, prefix="/energy", tags=["energy"], dependencies=[Depends(require_student)])
 api_router.include_router(inverter.router, prefix="/inverter", tags=["inverter"], dependencies=[Depends(require_staff)])
+api_router.include_router(load_management.router, prefix="/load-management", tags=["load-management"], dependencies=[Depends(require_student)])
 api_router.include_router(logs.router, prefix="/logs", tags=["logs"], dependencies=[Depends(require_admin)])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"], dependencies=[Depends(require_student)])
 api_router.include_router(users.router, prefix="/users", tags=["users"])

@@ -14,6 +14,7 @@ import KpiCard from "./KpiCard";
 import QuickActions from "./QuickActions";
 import RecentAlerts from "./RecentAlerts";
 import SystemHealth from "./SystemHealth";
+import SmartLoadManagement from "./SmartLoadManagement";
 import TodayStatistics from "./TodayStatistics";
 
 export default function EnergyDashboard() {
@@ -42,6 +43,8 @@ export default function EnergyDashboard() {
       </section>
 
       <EnergyFlow data={data} />
+
+      <SmartLoadManagement />
 
       <section className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">

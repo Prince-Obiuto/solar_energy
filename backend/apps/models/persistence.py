@@ -277,6 +277,31 @@ class BackupRunRecord(Base):
     error_information: Mapped[str | None] = mapped_column(Text)
 
 
+class LoadSheddingStateRecord(Base):
+    """Persistent ownership of relay changes made by battery automation."""
+
+    __tablename__ = "load_shedding_states"
+    __table_args__ = (
+        UniqueConstraint("policy_name", name="uq_load_shedding_states_policy_name"),
+        Index("ix_load_shedding_states_device", "device_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    policy_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
+    )
+    automatically_shed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    last_transition: Mapped[str | None] = mapped_column(String(20))
+    last_transition_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+
+
 # Concise persistence names for repository and migration consumers. Domain models
 # retain their existing names in their own modules.
 Area = AreaRecord
@@ -291,11 +316,12 @@ SystemEvent = SystemEventRecord
 Alert = AlertRecord
 User = UserRecord
 BackupRun = BackupRunRecord
+LoadSheddingState = LoadSheddingStateRecord
 
 __all__ = [
     "Alert", "AlertRecord", "Area", "AreaRecord", "BackupRun", "BackupRunRecord", "BatteryReading", "BatteryReadingRecord",
     "BreakerReading", "BreakerReadingRecord", "ControlEvent", "ControlEventRecord", "Device",
     "DeviceRecord", "GridReading", "GridReadingRecord", "InverterReading",
     "InverterReadingRecord", "SolarReading", "SolarReadingRecord", "SystemEvent",
-    "SystemEventRecord", "User", "UserRecord",
+    "SystemEventRecord", "User", "UserRecord", "LoadSheddingState", "LoadSheddingStateRecord",
 ]

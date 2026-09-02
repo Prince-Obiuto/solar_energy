@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from apps.services.device_service import DeviceService
     from apps.services.energy_service import EnergyService
     from apps.services.inverter_service import InverterService
+    from apps.services.load_shedding_service import LoadSheddingService
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class ApplicationRuntime:
     energy_service: EnergyService
     collector: EnergyCollector | None
     inverter_device_reference: str | None
+    load_shedding_service: LoadSheddingService | None = None
 
 
 _runtime: ApplicationRuntime | None = None
@@ -71,6 +73,7 @@ def build_application_runtime(
     from apps.services.device_service import DeviceService
     from apps.services.energy_service import EnergyService
     from apps.services.inverter_service import InverterService
+    from apps.services.load_shedding_service import LoadSheddingService
 
     beve_client_factory = beve_client_factory or BeveClient
     if tuya_client_factory is None:
@@ -91,13 +94,15 @@ def build_application_runtime(
     breakers = BreakerService(registrations)
     devices = DeviceService(inverter, breakers, inverter_id=inverter_reference)
     energy = EnergyService(inverter, breakers)
+    load_shedding = LoadSheddingService(config, breakers, session_factory)
     collector = None
     if inverter_reference or registrations:
         collector = EnergyCollector(
             inverter, breakers, inverter_device_reference=inverter_reference,
             persistence=SQLAlchemyTelemetryPersistence(session_factory),
+            load_shedding_service=load_shedding,
         )
-    runtime = ApplicationRuntime(inverter, breakers, devices, energy, collector, inverter_reference)
+    runtime = ApplicationRuntime(inverter, breakers, devices, energy, collector, inverter_reference, load_shedding)
     configure_application_runtime(runtime)
     return runtime
 

@@ -55,10 +55,14 @@ class BreakerControlService:
         breaker_id: str,
         action: str,
         requested_value: Any,
-        user: UserRecord,
+        user: UserRecord | None,
         reason: str | None,
         client_ip: str | None,
+        system_actor: str | None = None,
+        audit_details: dict[str, Any] | None = None,
     ) -> CommandResult:
+        if user is None and system_actor is None:
+            raise ValueError("A human or trusted system actor is required")
         with self._execution_lock:
             duplicate = self.session.scalar(select(ControlEventRecord).where(ControlEventRecord.request_id == request_id))
             if duplicate is not None:
@@ -72,11 +76,11 @@ class BreakerControlService:
             datapoint = self._datapoint(action)
             event = ControlEventRecord(
                 timestamp=self.clock(), requested_at=self.clock(), request_id=request_id,
-                user_id=user.id, role=user.role, device_id=device.id, area_id=device.area_id,
+                user_id=user.id if user else None, role=user.role if user else "system", device_id=device.id, area_id=device.area_id,
                 command=action, action=action, status=CommandStatus.RUNNING.value,
-                requested_by=user.email, requested_value=requested_value, reason=reason,
+                requested_by=user.email if user else system_actor, requested_value=requested_value, reason=reason,
                 client_ip=client_ip, hardware_acknowledgement=False,
-                details={"external_device_reference": breaker_id},
+                details={"external_device_reference": breaker_id, **(audit_details or {})},
             )
             self.session.add(event)
             try:

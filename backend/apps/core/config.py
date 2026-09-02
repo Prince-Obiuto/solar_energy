@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     beve_device_id: str | None = None
     beve_time_zone: str = "Africa/Lagos"
     beve_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    load_shedding_enabled: bool = True
+    load_shedding_confirm_readings: int = Field(default=2, ge=1, le=20)
+    load_shedding_lecturer_breaker_id: str | None = None
+    load_shedding_lecturer_shed_soc: float = Field(default=20, ge=0, le=100)
+    load_shedding_lecturer_restore_soc: float = Field(default=22, ge=0, le=100)
+    load_shedding_admin_breaker_id: str | None = None
+    load_shedding_admin_shed_soc: float = Field(default=15, ge=0, le=100)
+    load_shedding_admin_restore_soc: float = Field(default=17, ge=0, le=100)
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
@@ -90,6 +98,28 @@ class Settings(BaseSettings):
         if self.alert_low_voltage_v is not None and self.alert_high_voltage_v is not None and self.alert_low_voltage_v >= self.alert_high_voltage_v:
             raise ValueError("ALERT_LOW_VOLTAGE_V must be lower than ALERT_HIGH_VOLTAGE_V")
         return self
+
+    @model_validator(mode="after")
+    def validate_load_shedding_thresholds(self) -> "Settings":
+        pairs = (
+            (self.load_shedding_lecturer_shed_soc, self.load_shedding_lecturer_restore_soc, "LECTURER"),
+            (self.load_shedding_admin_shed_soc, self.load_shedding_admin_restore_soc, "ADMIN"),
+        )
+        for shed, restore, name in pairs:
+            if shed >= restore:
+                raise ValueError(
+                    f"LOAD_SHEDDING_{name}_SHED_SOC must be lower than its restore threshold"
+                )
+        return self
+
+    @field_validator(
+        "load_shedding_lecturer_breaker_id", "load_shedding_admin_breaker_id", mode="before"
+    )
+    @classmethod
+    def normalize_optional_breaker_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 @lru_cache

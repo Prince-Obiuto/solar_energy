@@ -32,6 +32,10 @@ MESSAGE_TYPES = frozenset(
         "alert.resolved",
         "alert.acknowledged",
         "system.status",
+        "load_management.status",
+        "load_management.shed",
+        "load_management.restored",
+        "load_management.action_failed",
     }
 )
 SENSITIVE_KEYS = frozenset(

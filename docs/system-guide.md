@@ -216,6 +216,7 @@ Authenticated routes under `/api/v1`:
   switch, countdown, relay restore mode, indicator mode, and child lock.
 - Reports: `GET /reports`, `/reports/export.csv`, `/reports/export.pdf`.
 - Alerts: list, detail, and acknowledgement endpoints.
+- Smart load management: `GET /load-management` (authenticated read-only status).
 - Administration: users list/create/update, audit logs, control inventory, and
   backup status.
 
@@ -226,7 +227,9 @@ Exact schemas and query parameters are authoritative in `/docs`.
 Authenticated endpoint: `WS /api/v1/ws/energy`. Messages are normalized and may
 include `inverter.status`, `battery.status`, `solar.status`, `grid.status`,
 `breaker.telemetry`, `breaker.status`, `device.online`, `device.offline`,
-`energy.update`, alert lifecycle events, and `system.status`. The browser sends
+`energy.update`, `load_management.status`, `load_management.shed`,
+`load_management.restored`, `load_management.action_failed`, alert lifecycle
+events, and `system.status`. The browser sends
 `{"type":"ping"}`; the server responds with a system-status pong. Connection
 cleanup and broadcast isolation prevent one failed client breaking others.
 
@@ -250,15 +253,54 @@ cd backend
 python -m apps.scripts.bootstrap_admin
 ```
 
-## 15. Breaker control workflow
+## 15. Breaker control and smart load-management workflow
 
 An ADMIN submits an allowlisted, validated request ID and value. Switch requests
 also require explicit confirmation and a reason. The service reads the previous
 value, writes through TinyTuya, waits briefly, reads the DP again, and reports
 success only on exact type/value match. Each lifecycle is stored in
 `control_events`; request IDs prevent duplicate execution. There is no inverter
-control. The current frontend deliberately does not expose breaker action forms,
-so authorized calls are presently API-only.
+control. The ADMIN Controls page exposes only the verified Tuya command surface.
+
+Smart load management consumes only a successful current BEVE/Siseli battery
+SOC sample from the existing collector. It never uses dashboard persistence,
+stale last-known data, or an independent polling loop, and it never writes to
+the inverter. After two consecutive qualifying readings (configurable), it
+uses the same audited TinyTuya DP1 command and read-back verification path as
+manual control.
+
+| Policy | Shed | Restore |
+| --- | ---: | ---: |
+| Lecturer Offices | SOC ≤ 20% | SOC ≥ 22% |
+| Admin Office | SOC ≤ 15% | SOC ≥ 17% |
+
+The two-percent hysteresis gap prevents relay chatter. Values inside the gap
+preserve automation ownership/state. `load_shedding_states` records whether the
+automation successfully shed each load, so ownership survives restarts. A
+manually OFF breaker is never automatically restored. If an administrator turns
+an auto-shed breaker ON while its confirmed low-SOC condition remains, the
+enabled safety policy is authoritative and may shed it again after a new full
+confirmation sequence. Failed or mismatched commands remain eligible for a
+later retry and never claim successful ownership.
+
+Configure TinyTuya external device references (not local keys) with:
+
+```dotenv
+LOAD_SHEDDING_ENABLED=true
+LOAD_SHEDDING_CONFIRM_READINGS=2
+LOAD_SHEDDING_LECTURER_BREAKER_ID=
+LOAD_SHEDDING_LECTURER_SHED_SOC=20
+LOAD_SHEDDING_LECTURER_RESTORE_SOC=22
+LOAD_SHEDDING_ADMIN_BREAKER_ID=
+LOAD_SHEDDING_ADMIN_SHED_SOC=15
+LOAD_SHEDDING_ADMIN_RESTORE_SOC=17
+```
+
+Blank IDs disable the affected policy. Set `LOAD_SHEDDING_ENABLED=false` to
+guarantee no automatic commands. At deployment, map each ID to the corresponding
+entry already loaded from `TUYA_DEVICE_FILE`, apply migrations, verify the
+read-only status endpoint, then supervise threshold/control tests with isolated
+loads. BEVE/Siseli remains strictly read-only; only Tuya breakers are controlled.
 
 ## 16. Audit logging
 
@@ -304,12 +346,8 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 
 ## 21. Known limitations
 
-- Runtime production composition of BEVE, breakers, capabilities and collector is
-  not automatically loaded by `apps.main`; deployment wiring remains required.
 - No REST device/area onboarding endpoint exists.
 - The frontend custom report date picker is not connected.
-- The frontend control center intentionally exposes no breaker command forms.
-- `/api/v1/controls` is an empty inventory endpoint.
 - The settings UI is read-only because no settings mutation API exists.
 - Login limiting is process-local; multi-worker deployments need a shared edge
   limiter.

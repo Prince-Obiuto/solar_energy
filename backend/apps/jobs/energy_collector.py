@@ -29,6 +29,7 @@ from apps.models.persistence import (
 )
 from apps.services.breaker_service import BreakerService
 from apps.services.inverter_service import InverterService
+from apps.services.load_shedding_service import LoadSheddingService
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,7 @@ class EnergyCollector:
         publisher: EventPublisher | None = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        load_shedding_service: LoadSheddingService | None = None,
     ) -> None:
         self._inverter_service = inverter_service
         self._breaker_service = breaker_service
@@ -212,6 +214,7 @@ class EnergyCollector:
         self._publisher = publisher
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep
+        self._load_shedding_service = load_shedding_service
         self._snapshot = CollectorSnapshot()
         self._state_lock = asyncio.Lock()
         self._source_locks: dict[str, asyncio.Lock] = {}
@@ -219,6 +222,7 @@ class EnergyCollector:
         self._last_persisted_online: dict[str, bool] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._running = False
+        self._last_load_management_status: dict[str, Any] | None = None
 
     @property
     def running(self) -> bool:
@@ -273,6 +277,8 @@ class EnergyCollector:
             except Exception as exc:
                 source_status = self._beve_source_status(exc)
                 await self._record_inverter_failure(source_id, now, source_status)
+                if self._load_shedding_service is not None:
+                    self._load_shedding_service.mark_unavailable()
                 await self._publish(
                     "inverter.poll_failed",
                     {"device_id": source_id, "timestamp": now, "failure_type": source_status.value},
@@ -296,6 +302,20 @@ class EnergyCollector:
                 "inverter.telemetry",
                 {**telemetry.model_dump(mode="json"), "device_id": source_id},
             )
+            if self._load_shedding_service is not None:
+                try:
+                    events = await self._run_sync(
+                        self._load_shedding_service.evaluate, telemetry.battery.soc
+                    )
+                    for event_type, payload in events:
+                        await self._publish(event_type, payload)
+                    status_model = await self._run_sync(self._load_shedding_service.get_status)
+                    load_status = status_model.model_dump(mode="json")
+                    if load_status != self._last_load_management_status:
+                        await self._publish("load_management.status", load_status)
+                        self._last_load_management_status = load_status
+                except Exception:
+                    logger.exception("Load shedding evaluation failed")
             return True
 
     async def collect_breaker_once(self, breaker_id: str) -> bool:
