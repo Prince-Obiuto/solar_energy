@@ -53,8 +53,6 @@ class Settings(BaseSettings):
     backup_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     beve_username: SecretStr | None = None
     beve_password: SecretStr | None = None
-    beve_app_id: SecretStr | None = None
-    beve_app_secret_encrypted: SecretStr | None = None
     beve_station_id: str | None = None
     beve_device_id: str | None = None
     beve_time_zone: str = "Africa/Lagos"

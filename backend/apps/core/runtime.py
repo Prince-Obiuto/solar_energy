@@ -177,7 +177,6 @@ def _apply_database_breaker_metadata(
 def _beve_config(config: Settings) -> BeveConfig | None:
     required = {
         "username": config.beve_username, "password": config.beve_password,
-        "app_id": config.beve_app_id, "app_secret_encrypted": config.beve_app_secret_encrypted,
         "station_id": config.beve_station_id, "device_id": config.beve_device_id,
     }
     present = {name for name, value in required.items() if value is not None and str(value) != ""}

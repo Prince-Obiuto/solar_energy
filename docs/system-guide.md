@@ -109,8 +109,9 @@ Backend variables are documented with safe placeholders in
   `LOGIN_RATE_LIMIT_ATTEMPTS`, `LOGIN_RATE_LIMIT_WINDOW_SECONDS`, `LOG_LEVEL`.
 - Database/auth: `DATABASE_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, initial-admin values.
-- BEVE: username, password, application identifiers, station/device identifiers,
-  time zone and timeout. All use the `BEVE_` prefix.
+- BEVE/Siseli: username, password, station/device identifiers, time zone and
+  timeout. The `siseli` package owns vendor authentication and request signing;
+  application IDs/secrets are not application configuration.
 - TinyTuya: `TUYA_DEVICE_FILE`, local socket timeout, polling interval and
   control verification delay. Secrets remain in the wizard-generated file.
 - Collection: independent BEVE/Tuya intervals, persistence interval, retry,
@@ -152,11 +153,14 @@ Never downgrade production without a database backup and reviewed recovery plan.
 
 ## 9. BEVE inverter integration
 
-`backend/apps/integrations/inverter/` contains the proven signed login, token
-refresh, device lookup, current-state fetch, adapter, and mapper. It is strictly
-read-only. It normalizes inverter, battery, solar, and grid categories and keeps
-legitimate hardware zero values. Missing fields become null. Credentials and
-tokens remain inside the integration client and are never serialized or logged.
+`backend/apps/integrations/inverter/` wraps the proven `SolarOfThingsAPI` login
+and device listing from the repository-local `energy/siseli` package (or an
+installed `siseli` package), then uses that authenticated session for the
+verified current-state endpoint. Authentication signing and session details
+remain owned by that library. The adapter is strictly read-only;
+it normalizes inverter, battery, solar, and grid categories, preserves legitimate
+hardware zero values, and maps only absent values to null. Credentials and
+session details are never serialized or logged.
 
 ## 10. Tuya breaker configuration
 

@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
-import os
 from copy import deepcopy
+from collections.abc import Callable, Mapping
+from importlib import import_module
+from pathlib import Path
+import sys
 from typing import Any, Protocol
 
 import requests
-from Crypto.Cipher import AES
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,10 +18,7 @@ from apps.core.config import BACKEND_DIR
 from .constants import (
     DEFAULT_BASE_URL,
     DEFAULT_TIMEOUT_SECONDS,
-    DEVICE_LIST_PATH,
     LATEST_STATE_PATH,
-    LOGIN_PATH,
-    REFRESH_TOKEN_PATH,
 )
 
 
@@ -73,8 +68,6 @@ class BeveConfig(BaseSettings):
     base_url: str = DEFAULT_BASE_URL
     username: SecretStr
     password: SecretStr
-    app_id: SecretStr
-    app_secret_encrypted: SecretStr
     station_id: str = Field(min_length=1)
     device_id: str = Field(min_length=1)
     time_zone: str = "Africa/Lagos"
@@ -90,72 +83,115 @@ class ResponseLike(Protocol):
 
 
 class SessionLike(Protocol):
-    headers: dict[str, str]
-
-    def post(self, url: str, **kwargs: Any) -> ResponseLike: ...
-
     def get(self, url: str, **kwargs: Any) -> ResponseLike: ...
+
+
+class SolarOfThingsAPILike(Protocol):
+    session: SessionLike
+
+    def login(self) -> Any: ...
+
+    def list_devices(self, station_id: str) -> Any: ...
+
+
+APIFactory = Callable[..., SolarOfThingsAPILike]
+
+
+def _solar_api_factory(**kwargs: Any) -> SolarOfThingsAPILike:
+    """Load the proven Siseli package without duplicating its auth protocol."""
+
+    try:
+        module = import_module("siseli.api")
+    except ImportError:
+        source_root = Path(__file__).resolve().parents[4] / "energy"
+        if not (source_root / "siseli" / "api.py").is_file():
+            raise BeveConfigurationError("The proven Siseli integration package is unavailable") from None
+        sys.path.insert(0, str(source_root))
+        try:
+            module = import_module("siseli.api")
+        except ImportError:
+            raise BeveConfigurationError("The proven Siseli integration package cannot be loaded") from None
+        finally:
+            try:
+                sys.path.remove(str(source_root))
+            except ValueError:  # pragma: no cover - defensive
+                pass
+    return module.SolarOfThingsAPI(**kwargs)
 
 
 class BeveClient:
     """Authenticate and read device telemetry; no mutation methods are exposed."""
 
-    def __init__(self, config: BeveConfig, *, session: SessionLike | None = None) -> None:
+    def __init__(
+        self,
+        config: BeveConfig,
+        *,
+        api: SolarOfThingsAPILike | None = None,
+        api_factory: APIFactory = _solar_api_factory,
+    ) -> None:
         self.config = config
-        self._session = session or requests.Session()
-        self._access_token: str | None = None
-        self._refresh_token: str | None = None
-        self._apply_session_headers()
+        self._api = api or api_factory(
+            user_id=config.username.get_secret_value(),
+            password=config.password.get_secret_value(),
+            time_zone=config.time_zone,
+        )
+        self._authenticated = False
+        self._device_verified = False
 
     def login(self) -> None:
-        """Perform the portal's verified signed login flow."""
+        """Delegate proven authentication/signing to the Siseli package."""
 
-        password_digest = hashlib.md5(  # noqa: S324 - required by upstream protocol
-            self.config.password.get_secret_value().encode("utf-8")
-        ).hexdigest()
-        payload = {
-            "account": self.config.username.get_secret_value(),
-            "password": password_digest,
-        }
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        response = self._request(
-            "post",
-            LOGIN_PATH,
-            data=body,
-            headers=self._signed_headers(body),
-            authentication_request=True,
-        )
-        if response.status_code in (401, 403):
+        try:
+            result = self._api.login()
+        except requests.Timeout:
+            raise BeveTimeoutError("BEVE login timed out") from None
+        except requests.ConnectionError:
+            raise BeveConnectionError("BEVE service is unreachable") from None
+        except Exception:
+            raise BeveAuthenticationError("BEVE login failed") from None
+        if result is False:
             raise BeveAuthenticationError("BEVE login failed")
-        data = self._json_mapping(response)
-        if data.get("code") not in (0, "0", None):
-            raise BeveAuthenticationError("BEVE login failed")
-        self._store_tokens(data.get("data") or data)
+        self._authenticated = True
 
     def fetch_device(self) -> dict[str, Any]:
         """Fetch and return the configured inverter from the verified device list."""
 
-        data = self._authenticated_json_request(
-            "post",
-            DEVICE_LIST_PATH,
-            json={"page": 1, "count": 50, "stationId": self.config.station_id},
-        )
-        payload = data.get("data")
-        if not isinstance(payload, dict) or not isinstance(payload.get("list"), list):
+        self._ensure_login()
+        try:
+            response = self._api.list_devices(self.config.station_id)
+        except requests.Timeout:
+            raise BeveTimeoutError("BEVE device request timed out") from None
+        except requests.ConnectionError:
+            raise BeveConnectionError("BEVE service is unreachable") from None
+        except Exception:
+            raise BeveCloudError("BEVE cloud device request failed") from None
+        devices = self._device_list(response)
+        if devices is None:
             raise BeveIncompleteResponseError("BEVE device response is incomplete")
-        for device in payload["list"]:
-            if isinstance(device, dict) and str(device.get("id")) == self.config.device_id:
-                return device
+        for device in devices:
+            if isinstance(device, Mapping) and str(
+                device.get("id") or device.get("deviceId") or device.get("device_id")
+            ) == self.config.device_id:
+                self._device_verified = True
+                return dict(device)
         raise BeveIncompleteResponseError("Configured BEVE device was not returned")
 
     def fetch_current_telemetry(self) -> dict[str, Any]:
         """Fetch the latest read-only state envelope for the configured inverter."""
 
-        data = self._authenticated_json_request(
-            "get",
-            LATEST_STATE_PATH,
-            params={"deviceId": self.config.device_id, "dataSource": 1},
-        )
+        self._ensure_login()
+        if not self._device_verified:
+            self.fetch_device()
+        response = self._telemetry_request()
+        if response.status_code in (401, 403):
+            self._authenticated = False
+            self.login()
+            response = self._telemetry_request()
+            if response.status_code in (401, 403):
+                raise BeveAuthenticationError("BEVE session reauthentication failed")
+        data = self._json_mapping(response)
+        if data.get("code") not in (0, "0", None):
+            raise BeveCloudError("BEVE cloud returned an unsuccessful response")
         payload = data.get("data")
         if not isinstance(payload, dict) or not isinstance(payload.get("fields"), dict):
             raise BeveIncompleteResponseError("BEVE telemetry response is incomplete")
@@ -166,75 +202,16 @@ class BeveClient:
 
         return self.fetch_current_telemetry()
 
-    def _authenticated_json_request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        if not self._access_token:
+    def _ensure_login(self) -> None:
+        if not self._authenticated:
             self.login()
-        response = self._request(method, path, **kwargs)
-        if response.status_code in (401, 403):
-            self._reauthenticate()
-            response = self._request(method, path, **kwargs)
-            if response.status_code in (401, 403):
-                raise BeveAuthenticationError("BEVE session reauthentication failed")
-        data = self._json_mapping(response)
-        if data.get("code") not in (0, "0", None):
-            raise BeveMalformedResponseError("BEVE returned an unsuccessful response")
-        return data
 
-    def _reauthenticate(self) -> None:
-        if self._refresh_token:
-            try:
-                response = self._request(
-                    "post",
-                    REFRESH_TOKEN_PATH,
-                    json={"refreshToken": self._refresh_token},
-                    authentication_request=True,
-                )
-                data = self._json_mapping(response)
-                if response.status_code not in (401, 403) and data.get("code") in (0, "0", None):
-                    self._store_tokens(data.get("data") or data)
-                    return
-            except BeveIntegrationError:
-                pass
-        self.login()
-
-    def _store_tokens(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
-            raise BeveMalformedResponseError("BEVE authentication response is malformed")
-        access_token = payload.get("accessToken") or payload.get("iotToken") or payload.get("token")
-        if not isinstance(access_token, str) or not access_token:
-            raise BeveAuthenticationError("BEVE authentication did not return a session token")
-        refresh_token = payload.get("refreshToken")
-        self._access_token = access_token
-        self._refresh_token = refresh_token if isinstance(refresh_token, str) else None
-        self._apply_session_headers()
-
-    def _apply_session_headers(self) -> None:
-        self._session.headers.update(
-            {
-                "Accept": "application/json",
-                "Content-Type": "application/json; charset=utf-8",
-                "IOT-Time-Zone": self.config.time_zone,
-                "Origin": self.config.base_url,
-                "Referer": f"{self.config.base_url}/",
-            }
-        )
-        if self._access_token:
-            self._session.headers["IOT-Token"] = self._access_token
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        authentication_request: bool = False,
-        **kwargs: Any,
-    ) -> ResponseLike:
-        request = getattr(self._session, method)
+    def _telemetry_request(self) -> ResponseLike:
         try:
-            response = request(
-                f"{self.config.base_url.rstrip('/')}{path}",
+            response = self._api.session.get(
+                f"{self.config.base_url.rstrip('/')}{LATEST_STATE_PATH}",
+                params={"deviceId": self.config.device_id, "dataSource": 1},
                 timeout=self.config.timeout_seconds,
-                **kwargs,
             )
             if response.status_code not in (401, 403):
                 response.raise_for_status()
@@ -244,13 +221,11 @@ class BeveClient:
         except requests.ConnectionError:
             raise BeveConnectionError("BEVE service is unreachable") from None
         except requests.HTTPError:
-            if authentication_request:
-                raise BeveAuthenticationError("BEVE authentication request failed") from None
             raise BeveCloudError("BEVE cloud returned an error") from None
         except requests.RequestException:
-            if authentication_request:
-                raise BeveAuthenticationError("BEVE authentication request failed") from None
             raise BeveConnectionError("BEVE request failed") from None
+        except Exception:
+            raise BeveCloudError("BEVE cloud request failed") from None
 
     @staticmethod
     def _json_mapping(response: ResponseLike) -> dict[str, Any]:
@@ -262,35 +237,20 @@ class BeveClient:
             raise BeveMalformedResponseError("BEVE response must be a JSON object")
         return data
 
-    def _signed_headers(self, body: bytes) -> dict[str, str]:
-        app_id = self.config.app_id.get_secret_value()
-        encrypted_secret = self.config.app_secret_encrypted.get_secret_value()
-        secret = self._decrypt_app_secret(app_id, encrypted_secret)
-        nonce = os.urandom(16).hex()
-        body_hash = hashlib.sha256(body).hexdigest()
-        sign_values = {
-            "IOT-Open-AppID": app_id,
-            "IOT-Open-Body-Hash": body_hash,
-            "IOT-Open-Nonce": nonce,
-        }
-        query = "&".join(f"{key}={sign_values[key]}" for key in sorted(sign_values))
-        encoded = base64.b64encode(query.encode("utf-8"))
-        digest = hmac.new(secret.encode("utf-8"), encoded, hashlib.sha256).digest()
-        return {
-            **sign_values,
-            "IOT-Open-Sign": hashlib.md5(digest).hexdigest(),  # noqa: S324 - vendor protocol
-            "Accept": "application/json",
-            "Content-Type": "application/json; charset=utf-8",
-            "Origin": self.config.base_url,
-            "Referer": f"{self.config.base_url}/",
-        }
-
     @staticmethod
-    def _decrypt_app_secret(app_id: str, encrypted_secret: str) -> str:
-        digest = hashlib.md5(app_id.encode("utf-8")).hexdigest()  # noqa: S324
-        cipher = AES.new(digest[:16].encode("ascii"), AES.MODE_CBC, digest[16:].encode("ascii"))
-        decrypted = cipher.decrypt(base64.b64decode(encrypted_secret)).rstrip(b"\x00")
-        return decrypted.decode("utf-8")
+    def _device_list(response: Any) -> list[Any] | None:
+        if isinstance(response, list):
+            return response
+        if isinstance(response, Mapping):
+            payload = response.get("data", response)
+            if isinstance(payload, list):
+                return payload
+            if isinstance(payload, Mapping):
+                for key in ("list", "devices"):
+                    devices = payload.get(key)
+                    if isinstance(devices, list):
+                        return devices
+        return None
 
 
 VERIFIED_BEVE_RESPONSE: dict[str, Any] = {

@@ -120,8 +120,8 @@ def test_loader_is_variable_length(tmp_path, count):
 def test_runtime_composes_beve_three_breakers_and_collector(tmp_path):
     config = Settings(
         _env_file=None, tuya_device_file=write_devices(tmp_path, device_entries()),
-        beve_username="fake-user", beve_password="fake-password", beve_app_id="fake-app",
-        beve_app_secret_encrypted="fake-secret", beve_station_id="station", beve_device_id="inverter",
+        beve_username="fake-user", beve_password="fake-password",
+        beve_station_id="station", beve_device_id="inverter",
     )
     try:
         runtime = build_application_runtime(
