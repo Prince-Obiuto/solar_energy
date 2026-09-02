@@ -1,20 +1,35 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { getMockUsers } from "../services/user.service";
+import { createUser, listUsers, updateUser } from "../services/user.service";
 
 export default function useUsers() {
-  const [users, setUsers] = useState(getMockUsers);
+  const [users, setUsers] = useState([]);
   const [editingUser, setEditingUser] = useState(null);
   const [notice, setNotice] = useState(null);
-
-  const saveUser = (draft) => {
-    if (draft.id) setUsers((items) => items.map((user) => user.id === draft.id ? { ...user, ...draft } : user));
-    else setUsers((items) => [...items, { ...draft, id: Date.now(), lastActive: "Never", status: "Active" }]);
-    setNotice(`${draft.id ? "User updated" : "User added"} locally. No account was provisioned.`);
-    setEditingUser(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    try { setUsers(await listUsers()); setError(null); }
+    catch (caught) { setError(caught.response?.data?.detail || "Unable to load users."); }
+    finally { setLoading(false); }
+  }, []);
+  // Initial user loading is synchronization with the administration API.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { refresh(); }, [refresh]);
+  const saveUser = async (draft) => {
+    try {
+      const saved = draft.id ? await updateUser(draft, { role: draft.role }) : await createUser(draft);
+      setUsers((items) => draft.id ? items.map((item) => item.id === saved.id ? saved : item) : [...items, saved]);
+      setNotice(draft.id ? "User role updated." : "User account created.");
+      setError(null); setEditingUser(null);
+    } catch (caught) { setError(caught.response?.data?.detail || "Unable to save user."); }
   };
-  const deactivateUser = (user) => { setUsers((items) => items.map((item) => item.id === user.id ? { ...item, status: "Deactivated" } : item)); setNotice(`${user.name} was deactivated locally.`); };
-  const resetPassword = (user) => setNotice(`Password reset was prepared for ${user.name}. No email was sent.`);
-
-  return { deactivateUser, editingUser, notice, resetPassword, saveUser, setEditingUser, users };
+  const deactivateUser = async (user) => {
+    try {
+      const saved = await updateUser(user, { is_active: false });
+      setUsers((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setNotice("User deactivated.");
+    } catch (caught) { setError(caught.response?.data?.detail || "Unable to deactivate user."); }
+  };
+  return { deactivateUser, editingUser, error, loading, notice, saveUser, setEditingUser, users };
 }

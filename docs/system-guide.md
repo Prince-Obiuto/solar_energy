@@ -1,0 +1,315 @@
+# Smart Renewable Energy Management System guide
+
+This document describes the implementation currently present in the repository.
+It does not imply hardware support beyond the verified BEVE and TMPH mappings.
+
+## 1. Architecture overview
+
+```text
+FiveStar inverter → Wi-Fi dongle → Internet → BEVE/Siseli cloud → Internet ─┐
+                                                                            ├─ normalized services → collector/cache → REST/WebSocket
+TMPH breaker → local Wi-Fi/LAN → TinyTuya ──────────────────────────────────┘                           │
+                                                                                                      └─ PostgreSQL
+
+React ─ REST /api/v1 + authenticated WS /api/v1/ws/energy
+```
+
+Vendor request formats and datapoints remain under `backend/apps/integrations/`.
+API, services, persistence, realtime messages, and React consume normalized
+models. The inverter integration exposes no write method. Breaker writes pass
+through an ADMIN-only, allowlisted, audited, read-back-verified workflow.
+
+The collector is intentionally decoupled from FastAPI requests. Dashboard and
+WebSocket consumers use collector/cache or persisted state rather than polling
+hardware per widget.
+
+BEVE connectivity describes availability of the cloud telemetry path, not
+direct reachability of the physical inverter. A BEVE failure retains the last
+known inverter values and marks their `data_status` stale/unavailable. TinyTuya
+connectivity is local and may mark a breaker offline after bounded LAN retries.
+
+## 2. Repository structure
+
+```text
+backend/
+  apps/api/             FastAPI route adapters
+  apps/core/            settings, security, permissions, logging, rate limit
+  apps/db/              SQLAlchemy engine and transactional sessions
+  apps/integrations/    BEVE and TinyTuya protocol boundaries
+  apps/jobs/            collector, health monitor, backup job
+  apps/models/          domain and SQLAlchemy models
+  apps/realtime/        WebSocket connection/event management
+  apps/schemas/         API and reusable Pydantic schemas
+  apps/services/        application services
+  apps/scripts/         admin bootstrap and one-shot backup commands
+  migrations/           Alembic revisions
+  tests/                backend tests and hardware fakes
+frontend/
+  src/app/              providers, authentication, routing
+  src/features/         feature components, hooks, REST adapters
+  src/components/       shared UI, layout, charts and tables
+  src/services/         Axios and realtime clients
+docs/                   system-level documentation
+```
+
+## 3. Local development instructions
+
+Requirements are Python 3.12-compatible tooling, PostgreSQL, Node.js 20+, and
+npm. Do not use real hardware credentials in a shared development environment.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env
+
+cd frontend
+npm install
+cp .env.example .env
+```
+
+Fill only local values in the ignored `.env` files. Start PostgreSQL and apply
+migrations before starting the complete backend.
+
+## 4. Backend startup
+
+```bash
+cd backend
+python -m uvicorn apps.main:app --reload
+```
+
+Swagger is available at `/docs`; health endpoints are `/health` and
+`/api/v1/health`. Production should run without `--reload` behind a TLS reverse
+proxy and with an explicit worker/process policy.
+
+## 5. Frontend startup
+
+```bash
+cd frontend
+npm run dev
+```
+
+For production assets:
+
+```bash
+npm run lint
+npm run build
+```
+
+Serve `frontend/dist/` through the production web server and proxy `/api/v1`
+including WebSocket upgrades to FastAPI.
+
+## 6. Environment variables
+
+Backend variables are documented with safe placeholders in
+`backend/.env.example`:
+
+- Application: `APP_NAME`, `APP_ENV`, `APP_VERSION`, `API_V1_PREFIX`.
+- HTTP security: `CORS_ORIGINS`, `ALLOWED_HOSTS`, `MAX_REQUEST_BODY_BYTES`,
+  `LOGIN_RATE_LIMIT_ATTEMPTS`, `LOGIN_RATE_LIMIT_WINDOW_SECONDS`, `LOG_LEVEL`.
+- Database/auth: `DATABASE_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`,
+  `ACCESS_TOKEN_EXPIRE_MINUTES`, initial-admin values.
+- BEVE: username, password, application identifiers, station/device identifiers,
+  time zone and timeout. All use the `BEVE_` prefix.
+- Collection: independent BEVE/Tuya intervals, persistence interval, retry,
+  stale, WebSocket and health-monitor timings.
+- Alerts: optional electrical threshold values. Blank means disabled.
+- Backup: primary/secondary destination, retention, command and timeout.
+
+Frontend variables are in `frontend/.env.example`: REST base, optional absolute
+WebSocket URL, and the display stale threshold. Production JWT and credential
+values must never use repository defaults.
+
+## 7. PostgreSQL setup
+
+Create a dedicated database and least-privilege application account using local
+department policy. Put its URL only in the protected backend environment file.
+The schema stores areas/devices, normalized telemetry, users, control/system
+events, alerts, and backup history. Hardware secrets are not Device columns.
+
+Telemetry tables have device/timestamp and timestamp indexes. Device, alert,
+event, user, control request, and backup status/time access paths have dedicated
+indexes or uniqueness constraints.
+
+## 8. Alembic migrations
+
+```bash
+cd backend
+alembic upgrade head
+alembic current
+```
+
+Test downgrade behavior on a disposable database before production changes:
+
+```bash
+alembic downgrade -1
+alembic upgrade head
+```
+
+Never downgrade production without a database backup and reviewed recovery plan.
+
+## 9. BEVE inverter integration
+
+`backend/apps/integrations/inverter/` contains the proven signed login, token
+refresh, device lookup, current-state fetch, adapter, and mapper. It is strictly
+read-only. It normalizes inverter, battery, solar, and grid categories and keeps
+legitimate hardware zero values. Missing fields become null. Credentials and
+tokens remain inside the integration client and are never serialized or logged.
+
+## 10. Tuya breaker configuration
+
+The verified device is WIFl Smart Meter Pro / TMPH, category `znjdq`, protocol
+3.5. Each runtime registration requires device ID, friendly name, area, local
+key, IP address, protocol version, enabled state, and verified capabilities.
+Secrets must be injected through protected deployment configuration—not source,
+logs, API output, `devices.json`, or `snapshot.json`.
+
+Only verified control DPs 1, 9, 38, 40 and 41 are allowlisted. Calibration DPs
+22–25 and unknown DPs 21, 26 and 42 cannot be written through the adapter.
+
+## 11. Device onboarding
+
+1. Create the Area and Device persistence rows using an approved administrative
+   procedure.
+2. Obtain device identity/network secrets out of band and store them in the
+   protected server configuration.
+3. Confirm the device protocol and each capability against hardware.
+4. Construct the corresponding `TuyaDeviceConfig`, `TuyaClient`, and
+   `BreakerRegistration`; do not infer unsupported capabilities.
+5. Configure the application services/collector in the deployment composition.
+6. Verify normalized read-only telemetry before enabling ADMIN control.
+7. Test read-back verification and audit persistence under supervision.
+
+There is currently no REST onboarding/configuration endpoint and no production
+composition loader for a variable-length breaker list. Deployment must supply
+that composition without committing secrets.
+
+## 12. REST endpoint inventory
+
+Public: `GET /`, `GET /health`, `GET /api/v1/health`, `POST /auth/login`, and
+`POST /auth/logout` under `/api/v1`.
+
+Authenticated routes under `/api/v1`:
+
+- Auth: `GET /auth/me`.
+- Dashboard: `GET /dashboard`, `/dashboard/summary`, `/dashboard/areas`.
+- Devices/energy: `GET /devices`, `/devices/{id}`, `/energy`,
+  `/energy/latest`, `/energy/history`.
+- Inverter: `GET /inverter`, `/inverter/battery`, `/inverter/solar`,
+  `/inverter/grid`.
+- Breakers: `GET /breakers`, `/breakers/{id}` and ADMIN control routes for
+  switch, countdown, relay restore mode, indicator mode, and child lock.
+- Reports: `GET /reports`, `/reports/export.csv`, `/reports/export.pdf`.
+- Alerts: list, detail, and acknowledgement endpoints.
+- Administration: users list/create/update, audit logs, control inventory, and
+  backup status.
+
+Exact schemas and query parameters are authoritative in `/docs`.
+
+## 13. WebSocket event inventory
+
+Authenticated endpoint: `WS /api/v1/ws/energy`. Messages are normalized and may
+include `inverter.status`, `battery.status`, `solar.status`, `grid.status`,
+`breaker.telemetry`, `breaker.status`, `device.online`, `device.offline`,
+`energy.update`, alert lifecycle events, and `system.status`. The browser sends
+`{"type":"ping"}`; the server responds with a system-status pong. Connection
+cleanup and broadcast isolation prevent one failed client breaking others.
+
+## 14. Authentication and RBAC
+
+Passwords are PBKDF2-SHA256 hashes. JWT access tokens expire and are placed in an
+HttpOnly, SameSite=Lax cookie; production cookies are Secure. The frontend does
+not persist tokens in local storage. Login failures use a generic response and
+are audited. An in-process sliding-window limiter bounds login attempts per
+client address; use a shared reverse-proxy limiter when deploying multiple
+workers.
+
+Roles are hierarchical: STUDENT for dashboard/permitted reports, STAFF for
+detailed devices/areas, and ADMIN for controls/users/audit/backup operations.
+Frontend guards improve UX; backend dependencies are the security boundary.
+
+Bootstrap the first administrator once:
+
+```bash
+cd backend
+python -m apps.scripts.bootstrap_admin
+```
+
+## 15. Breaker control workflow
+
+An ADMIN submits an allowlisted, validated request ID and value. Switch requests
+also require explicit confirmation and a reason. The service reads the previous
+value, writes through TinyTuya, waits briefly, reads the DP again, and reports
+success only on exact type/value match. Each lifecycle is stored in
+`control_events`; request IDs prevent duplicate execution. There is no inverter
+control. The current frontend deliberately does not expose breaker action forms,
+so authorized calls are presently API-only.
+
+## 16. Audit logging
+
+Authentication and report access use `system_events`; breaker commands use
+`control_events`. `GET /api/v1/logs` exposes a bounded ADMIN-only normalized view
+without raw detail payloads. Application request logs include only method, path,
+status and duration—never headers, query strings, bodies, credentials or tokens.
+
+## 17. Reporting
+
+PostgreSQL-backed raw/minute/hour/day history supports inverter, battery, solar,
+grid and area sources with bounded date/device/area filters. CSV uses ISO 8601
+timestamps; PDF provides a bounded technical summary. Access/export is audited.
+Tuya accumulated energy remains neutrally named because its unit is unverified.
+
+## 18. Alerts
+
+The health engine handles supported offline, stale, polling, control,
+authentication, malformed telemetry, collector, database, backup and WebSocket
+conditions. Electrical thresholds are disabled until explicitly configured.
+Active alerts are deduplicated and can be resolved/acknowledged. Legitimate BEVE
+states and real zero values are not faults.
+
+## 19. Backup and restore
+
+The one-shot backup job uses compressed custom-format `pg_dump`, atomic rename,
+retention, optional secondary copy, persisted history, and failure alerts. The
+nightly systemd timer, manual backup, restore and cron alternative are documented
+in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
+
+## 20. Production deployment
+
+- Use TLS and proxy HTTP/WebSocket traffic through the same trusted origin.
+- Set `APP_ENV=production`, a random JWT secret, exact CORS origins and allowed
+  hosts; keep environment-file permissions restrictive.
+- Run Alembic before starting the service.
+- Use dedicated OS/database accounts and writable telemetry/backup locations.
+- Install the systemd backup timer and monitor its status.
+- Configure log rotation, disk monitoring, PostgreSQL backup verification, and
+  reverse-proxy request/rate limits.
+- Do not use reload mode or expose PostgreSQL/Tuya devices publicly.
+- Validate hardware connectivity and a restore in a staging environment.
+
+## 21. Known limitations
+
+- Runtime production composition of BEVE, breakers, capabilities and collector is
+  not automatically loaded by `apps.main`; deployment wiring remains required.
+- No REST device/area onboarding endpoint exists.
+- The frontend custom report date picker is not connected.
+- The frontend control center intentionally exposes no breaker command forms.
+- `/api/v1/controls` is an empty inventory endpoint.
+- The settings UI is read-only because no settings mutation API exists.
+- Login limiting is process-local; multi-worker deployments need a shared edge
+  limiter.
+- Request body limiting uses declared Content-Length; the reverse proxy must also
+  enforce body and connection limits.
+- No automated frontend unit-test script is currently defined.
+
+## 22. Hardware-specific TODOs
+
+- Verify the unit/scaling of TMPH accumulated-energy DP17 before using `kWh`.
+- Confirm each deployed breaker's supported capability set and configuration DPs.
+- Validate supervised control timing/read-back behavior on Library and Admin
+  offices breakers before operational use.
+- Verify BEVE session behavior, mapping, station/device selection, and time-zone
+  handling against the deployed FiveStar inverter after vendor changes.
+- Define and secure the production runtime composition/onboarding mechanism.
+- Test network loss/recovery, stale thresholds, and polling rates on the actual
+  department LAN without hammering either hardware source.

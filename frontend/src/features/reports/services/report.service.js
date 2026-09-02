@@ -1,36 +1,34 @@
-const REPORT_DATA = {
-  Daily: {
-    labels: ["06:00", "09:00", "12:00", "15:00", "18:00", "21:00"],
-    solarProduction: [12, 48, 94, 77, 31, 4],
-    batteryUsage: [22, 34, 18, 27, 56, 42],
-    gridImport: [38, 26, 8, 0, 12, 63],
-    areaConsumption: [{ label: "Library/ICT Hubl", value: 84 }, { label: "Upstairs", value: 62 }, { label: "Downstairs", value: 41 }],
-  },
-  Weekly: {
-    labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-    solarProduction: [67, 74, 62, 88, 92, 76, 81],
-    batteryUsage: [44, 38, 51, 42, 36, 57, 48],
-    gridImport: [32, 29, 41, 25, 21, 37, 30],
-    areaConsumption: [{ label: "Library/ICT Hubl", value: 78 }, { label: "Upstairs", value: 64 }, { label: "Downstairs", value: 47 }],
-  },
-  Monthly: {
-    labels: ["Week 1", "Week 2", "Week 3", "Week 4"],
-    solarProduction: [73, 81, 76, 89],
-    batteryUsage: [46, 39, 44, 37],
-    gridImport: [35, 28, 33, 24],
-    areaConsumption: [{ label: "Library/ICT Hubl", value: 82 }, { label: "Upstairs", value: 59 }, { label: "Downstairs", value: 45 }],
-  },
-  Custom: {
-    labels: ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5"],
-    solarProduction: [54, 71, 83, 67, 77],
-    batteryUsage: [38, 45, 32, 48, 41],
-    gridImport: [40, 31, 22, 35, 29],
-    areaConsumption: [{ label: "Library/ICT Hubl", value: 75 }, { label: "Upstairs", value: 61 }, { label: "Downstairs", value: 49 }],
-  },
+import axiosClient from "../../../services/http/axiosClient";
+
+export const REPORT_TABS = ["Daily", "Weekly", "Monthly", "Custom"];
+
+const SOURCE_METRICS = {
+  solar: "power_w",
+  battery: "power_w",
+  grid: "power_w",
+  areas: "power_w",
 };
 
-export const REPORT_TABS = Object.keys(REPORT_DATA);
+export async function getReportData(period, role) {
+  const sources = role === "student" ? ["solar"] : ["solar", "battery", "grid", "areas"];
+  const responses = await Promise.all(sources.map(async (source) => {
+    const { data } = await axiosClient.get("/reports", { params: { source, period: period.toLowerCase(), aggregation: "hour", limit: 1000 } });
+    return [source, data.history.items || []];
+  }));
+  const bySource = Object.fromEntries(responses);
+  const series = (source) => ({
+    labels: (bySource[source] || []).map((point) => new Date(point.timestamp).toLocaleString()),
+    values: (bySource[source] || []).map((point) => point.metrics?.[SOURCE_METRICS[source]] ?? null),
+  });
+  const latestAreas = new Map();
+  for (const point of bySource.areas || []) latestAreas.set(point.area || point.device_id, point.metrics?.power_w ?? null);
+  return { solar: series("solar"), battery: series("battery"), grid: series("grid"), areas: [...latestAreas].map(([label, value]) => ({ label, value })) };
+}
 
-export function getReportData(period) {
-  return structuredClone(REPORT_DATA[period]);
+export async function downloadReport(format, period) {
+  const response = await axiosClient.get(`/reports/export.${format}`, { params: { source: "solar", period: period.toLowerCase(), aggregation: "hour", limit: 10000 }, responseType: "blob" });
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url; link.download = `energy-report.${format}`; link.click();
+  URL.revokeObjectURL(url);
 }

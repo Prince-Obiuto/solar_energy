@@ -38,3 +38,5 @@ dist-ssr
 **/tuya-raw.json
 /backend/test.py
 /energy/
+/backend/backups/
+*.partial

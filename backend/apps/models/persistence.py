@@ -236,6 +236,8 @@ class AlertRecord(Base):
     __table_args__ = (
         Index("ix_alerts_active_timestamp", "active", "timestamp"),
         Index("ix_alerts_device_timestamp", "device_id", "timestamp"),
+        Index("ix_alerts_category_active", "category", "active"),
+        Index("ix_alerts_dedup_key", "dedup_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -249,6 +251,30 @@ class AlertRecord(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     alert_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON_DATA)
+    first_seen: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_seen: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    area_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("areas.id", ondelete="SET NULL"))
+    category: Mapped[str | None] = mapped_column(String(120))
+    dedup_key: Mapped[str | None] = mapped_column(String(512))
+
+
+class BackupRunRecord(Base):
+    __tablename__ = "backup_runs"
+    __table_args__ = (
+        Index("ix_backup_runs_started_at", "started_at"),
+        Index("ix_backup_runs_status_started_at", "status", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    output_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    filename: Mapped[str | None] = mapped_column(String(255))
+    destination: Mapped[str] = mapped_column(String(30), nullable=False, default="primary")
+    error_information: Mapped[str | None] = mapped_column(Text)
 
 
 # Concise persistence names for repository and migration consumers. Domain models
@@ -264,9 +290,10 @@ ControlEvent = ControlEventRecord
 SystemEvent = SystemEventRecord
 Alert = AlertRecord
 User = UserRecord
+BackupRun = BackupRunRecord
 
 __all__ = [
-    "Alert", "AlertRecord", "Area", "AreaRecord", "BatteryReading", "BatteryReadingRecord",
+    "Alert", "AlertRecord", "Area", "AreaRecord", "BackupRun", "BackupRunRecord", "BatteryReading", "BatteryReadingRecord",
     "BreakerReading", "BreakerReadingRecord", "ControlEvent", "ControlEventRecord", "Device",
     "DeviceRecord", "GridReading", "GridReadingRecord", "InverterReading",
     "InverterReadingRecord", "SolarReading", "SolarReadingRecord", "SystemEvent",

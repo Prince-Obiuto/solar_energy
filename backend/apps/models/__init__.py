@@ -3,6 +3,7 @@
 from .breaker import BreakerDevice, BreakerState, BreakerStatus
 from .control_event import CommandResult, CommandStatus, DeviceCommand
 from .device import (
+    ConnectivityType, DataFreshness, DataSource, DataStatus,
     Device,
     DeviceCapability,
     DeviceFault,
@@ -12,6 +13,7 @@ from .device import (
     DeviceType,
     DomainModel,
     FaultSeverity,
+    SourceStatus,
 )
 from .energy_reading import ElectricalMeasurement, EnergyMeasurement, EnergyReading
 from .inverter import (
@@ -32,9 +34,9 @@ from .user import UserProfile, UserRole
 __all__ = [
     "BatteryChargingState", "BatteryStatus", "BatteryTelemetryStatus", "BreakerDevice",
     "BreakerState", "BreakerStatus",
-    "CommandResult", "CommandStatus", "Device", "DeviceCapability", "DeviceCommand",
+    "CommandResult", "CommandStatus", "ConnectivityType", "DataFreshness", "DataSource", "DataStatus", "Device", "DeviceCapability", "DeviceCommand",
     "DeviceFault", "DeviceSnapshot", "DeviceStatus", "DeviceType", "DomainModel",
     "ElectricalMeasurement", "EnergyMeasurement", "EnergyReading", "FaultSeverity", "RegisteredDevice",
     "GridState", "GridStatus", "GridTelemetryStatus", "InverterStatus", "InverterTelemetry",
-    "InverterTelemetryStatus", "PVStatus", "SolarTelemetryStatus", "UserProfile", "UserRole",
+    "InverterTelemetryStatus", "PVStatus", "SolarTelemetryStatus", "SourceStatus", "UserProfile", "UserRole",
 ]

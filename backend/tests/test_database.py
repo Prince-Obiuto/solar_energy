@@ -257,6 +257,7 @@ def test_alembic_upgrade_and_downgrade(tmp_path) -> None:
     required_tables = {
         "areas", "devices", "inverter_readings", "battery_readings", "solar_readings",
         "grid_readings", "breaker_readings", "control_events", "system_events", "alerts", "users",
+        "backup_runs",
     }
     assert required_tables <= set(inspect(engine).get_table_names())
 

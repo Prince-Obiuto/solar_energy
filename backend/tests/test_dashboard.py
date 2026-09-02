@@ -8,7 +8,10 @@ from sqlalchemy.orm import sessionmaker
 
 from apps.integrations.inverter import InverterAdapter, MockBeveClient
 from apps.jobs.energy_collector import CollectorSnapshot, DeviceCollectionState
-from apps.models import BreakerDevice, BreakerStatus, DeviceCapability, DeviceStatus
+from apps.models import (
+    BreakerDevice, BreakerStatus, ConnectivityType, DataFreshness, DataSource,
+    DeviceCapability, DeviceStatus, SourceStatus,
+)
 from apps.models.persistence import (
     AlertRecord, AreaRecord, BatteryReadingRecord, BreakerReadingRecord,
     DeviceRecord, GridReadingRecord, InverterReadingRecord, SolarReadingRecord,
@@ -71,9 +74,9 @@ async def test_dashboard_aggregates_one_collector_snapshot_and_retains_zero(dash
             "admin": breaker("admin", "Admin offices", online=False, seen=None, power=None),
         },
         devices={
-            "inverter": DeviceCollectionState(device_id="inverter", online=True, stale=False, last_seen=NOW),
-            "library": DeviceCollectionState(device_id="library", online=True, stale=False, last_seen=NOW),
-            "admin": DeviceCollectionState(device_id="admin", online=False, stale=True, last_seen=None),
+            "inverter": DeviceCollectionState(device_id="inverter", online=None, stale=False, last_seen=NOW, last_successful_update=NOW, connectivity_type=ConnectivityType.CLOUD, data_source=DataSource.BEVE_CLOUD, source_status=SourceStatus.CONNECTED, data_freshness=DataFreshness.LIVE),
+            "library": DeviceCollectionState(device_id="library", online=True, stale=False, last_seen=NOW, connectivity_type=ConnectivityType.LOCAL, data_source=DataSource.TINYTUYA),
+            "admin": DeviceCollectionState(device_id="admin", online=False, stale=True, last_seen=None, connectivity_type=ConnectivityType.LOCAL, data_source=DataSource.TINYTUYA),
         },
     )
     collector = FakeCollector(snapshot)
@@ -89,11 +92,13 @@ async def test_dashboard_aggregates_one_collector_snapshot_and_retains_zero(dash
     assert result.areas[1].area == "Library"
     assert result.areas[1].voltage_v == 0
     assert result.areas[1].power_w == 0
-    assert result.system.online_devices == 2
+    assert result.system.online_devices == 1
     assert result.system.offline_devices == 1
     assert result.system.stale_devices == 1
     assert result.system.active_alerts == 1
     assert result.system.overall_health.value == "degraded"
+    assert result.data_status.data_freshness is DataFreshness.LIVE
+    assert result.system.components["inverter_cloud"].value == "healthy"
 
 
 @pytest.mark.asyncio
@@ -106,9 +111,9 @@ async def test_partial_breaker_outage_keeps_other_area_and_last_known_inverter(d
             "admin": breaker("admin", "Admin offices", online=False, seen=NOW - timedelta(minutes=5), power=None),
         },
         devices={
-            "inverter": DeviceCollectionState(device_id="inverter", online=False, stale=False, last_seen=NOW),
-            "library": DeviceCollectionState(device_id="library", online=True, stale=False, last_seen=NOW),
-            "admin": DeviceCollectionState(device_id="admin", online=False, stale=True, last_seen=NOW - timedelta(minutes=5)),
+            "inverter": DeviceCollectionState(device_id="inverter", online=None, stale=True, last_seen=NOW, last_successful_update=NOW, connectivity_type=ConnectivityType.CLOUD, data_source=DataSource.BEVE_CLOUD, source_status=SourceStatus.UNREACHABLE, data_freshness=DataFreshness.STALE),
+            "library": DeviceCollectionState(device_id="library", online=True, stale=False, last_seen=NOW, connectivity_type=ConnectivityType.LOCAL, data_source=DataSource.TINYTUYA),
+            "admin": DeviceCollectionState(device_id="admin", online=False, stale=True, last_seen=NOW - timedelta(minutes=5), connectivity_type=ConnectivityType.LOCAL, data_source=DataSource.TINYTUYA),
         },
     )
     with dashboard_db() as session:
@@ -117,7 +122,13 @@ async def test_partial_breaker_outage_keeps_other_area_and_last_known_inverter(d
     assert result.inverter.output_power_w == 12
     assert next(area for area in result.areas if area.area == "Library").power_w == 125
     assert next(area for area in result.areas if area.area == "Admin offices").online is False
-    assert result.system.offline_devices == 2
+    assert result.system.offline_devices == 1
+    assert result.data_status.available is False
+    assert result.data_status.stale is True
+    assert result.data_status.source_status is SourceStatus.UNREACHABLE
+    assert result.system.system_status is OverallHealth.DEGRADED
+    assert result.system.components["breakers"].value == "degraded"
+    assert result.inverter.status == "Battery Mode"
 
 
 @pytest.mark.asyncio
@@ -143,7 +154,8 @@ async def test_database_fallback_returns_latest_normalized_state_without_collect
     assert result.grid.frequency == 0
     assert result.areas[0].is_on is False
     assert result.areas[0].accumulated_energy is None
-    assert result.system.overall_health.value == "healthy"
+    assert result.system.overall_health.value == "degraded"
+    assert result.data_status.data_freshness is DataFreshness.STALE
 
 
 def test_dashboard_routes_expose_snapshot_summary_and_areas(client) -> None:

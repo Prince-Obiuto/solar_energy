@@ -11,6 +11,10 @@ from apps.models import (
     BreakerStatus,
     CommandResult,
     CommandStatus,
+    ConnectivityType,
+    DataFreshness,
+    DataSource,
+    DataStatus,
     Device,
     DeviceCapability,
     DeviceCommand,
@@ -24,7 +28,25 @@ from apps.models import (
     GridStatus,
     InverterStatus,
     PVStatus,
+    SourceStatus,
 )
+
+
+def test_cloud_data_status_does_not_claim_physical_inverter_is_offline() -> None:
+    status = DataStatus(
+        connectivity_type=ConnectivityType.CLOUD,
+        data_source=DataSource.BEVE_CLOUD,
+        available=False,
+        stale=True,
+        source_status=SourceStatus.UNREACHABLE,
+        data_freshness=DataFreshness.STALE,
+        last_successful_update=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    payload = status.model_dump(mode="json")
+    assert payload["connectivity_type"] == "cloud"
+    assert payload["data_source"] == "beve_cloud"
+    assert payload["source_status"] == "unreachable"
+    assert "offline" not in payload.values()
 
 
 def test_device_capabilities_and_faults_serialize_for_transport() -> None:

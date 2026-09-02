@@ -1,4 +1,5 @@
 export const APP_ROUTES = {
+  login: "/login",
   dashboard: "/",
   energy: "/energy",
   areas: "/areas",

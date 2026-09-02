@@ -10,15 +10,15 @@ from sqlalchemy.orm import Session
 from apps.core.config import settings
 from apps.jobs.energy_collector import CollectorSnapshot, EnergyCollector
 from apps.models import (
-    BatteryTelemetryStatus, GridTelemetryStatus, InverterTelemetryStatus,
-    SolarTelemetryStatus,
+    BatteryTelemetryStatus, ConnectivityType, DataFreshness, DataSource, DataStatus,
+    GridTelemetryStatus, InverterTelemetryStatus, SolarTelemetryStatus, SourceStatus,
 )
 from apps.models.persistence import (
     AlertRecord, AreaRecord, BatteryReadingRecord, BreakerReadingRecord,
     DeviceRecord, GridReadingRecord, InverterReadingRecord, SolarReadingRecord,
 )
 from apps.schemas.dashboard import (
-    DashboardArea, DashboardAreas, DashboardSnapshot, DashboardSystem, OverallHealth,
+    ComponentHealth, DashboardArea, DashboardAreas, DashboardSnapshot, DashboardSystem, OverallHealth,
 )
 
 
@@ -37,16 +37,17 @@ class DashboardService:
     async def get_dashboard(self) -> DashboardSnapshot:
         cache = await self.collector.get_snapshot() if self.collector else CollectorSnapshot()
         inverter, battery, solar, grid = self._inverter_categories(cache)
+        data_status = self._inverter_data_status(cache)
         areas = self._areas(cache)
-        system = self._system(cache, areas)
+        system = self._system(cache, areas, data_status)
         return DashboardSnapshot(
             system=system, inverter=inverter, battery=battery, solar=solar, grid=grid,
-            areas=areas,
+            data_status=data_status, areas=areas,
         )
 
     async def get_summary(self) -> DashboardSystem:
         cache = await self.collector.get_snapshot() if self.collector else CollectorSnapshot()
-        return self._system(cache, self._areas(cache))
+        return self._system(cache, self._areas(cache), self._inverter_data_status(cache))
 
     async def get_areas(self) -> DashboardAreas:
         cache = await self.collector.get_snapshot() if self.collector else CollectorSnapshot()
@@ -86,6 +87,33 @@ class DashboardService:
             ) if solar else SolarTelemetryStatus(),
             GridTelemetryStatus(voltage=grid.voltage, frequency=grid.frequency, power_w=grid.power_w)
             if grid else GridTelemetryStatus(),
+        )
+
+    def _inverter_data_status(self, cache: CollectorSnapshot) -> DataStatus:
+        state = next(
+            (item for item in cache.devices.values() if item.data_source is DataSource.BEVE_CLOUD),
+            None,
+        )
+        if state is not None:
+            connected = state.source_status is SourceStatus.CONNECTED
+            return DataStatus(
+                connectivity_type=ConnectivityType.CLOUD,
+                data_source=DataSource.BEVE_CLOUD,
+                available=connected and cache.inverter is not None,
+                stale=state.stale,
+                source_status=state.source_status,
+                data_freshness=state.data_freshness,
+                last_successful_update=state.last_successful_update,
+            )
+        latest = self.session.scalar(select(func.max(InverterReadingRecord.timestamp)))
+        return DataStatus(
+            connectivity_type=ConnectivityType.CLOUD,
+            data_source=DataSource.BEVE_CLOUD,
+            available=False,
+            stale=latest is not None,
+            source_status=SourceStatus.UNKNOWN,
+            data_freshness=DataFreshness.STALE if latest is not None else DataFreshness.UNAVAILABLE,
+            last_successful_update=latest,
         )
 
     def _areas(self, cache: CollectorSnapshot) -> list[DashboardArea]:
@@ -138,16 +166,23 @@ class DashboardService:
             )
         return sorted(areas.values(), key=lambda item: (item.area.lower(), item.device_id))
 
-    def _system(self, cache: CollectorSnapshot, areas: list[DashboardArea]) -> DashboardSystem:
+    def _system(
+        self, cache: CollectorSnapshot, areas: list[DashboardArea], data_status: DataStatus
+    ) -> DashboardSystem:
         now = self.clock()
-        device_rows = self.session.scalars(select(DeviceRecord).where(DeviceRecord.enabled.is_(True))).all()
+        device_rows = self.session.scalars(
+            select(DeviceRecord).where(
+                DeviceRecord.enabled.is_(True), DeviceRecord.device_type == "breaker"
+            )
+        ).all()
         states: dict[str, tuple[bool, bool, datetime | None]] = {}
         for device in device_rows:
             last_seen = device.last_seen
             stale = last_seen is None or (now - last_seen).total_seconds() >= settings.device_stale_after_seconds
             states[device.external_reference] = (last_seen is not None and not stale, stale, last_seen)
         for device_id, state in cache.devices.items():
-            states[device_id] = (state.online, state.stale, state.last_seen)
+            if state.connectivity_type is ConnectivityType.LOCAL:
+                states[device_id] = (state.online is True, state.stale, state.last_seen)
         for area in areas:
             states.setdefault(area.device_id, (area.online, self._stale(area.last_seen, now), area.last_seen))
         online = sum(1 for value in states.values() if value[0])
@@ -155,18 +190,41 @@ class DashboardService:
         stale = sum(1 for value in states.values() if value[1])
         active_alerts = self.session.scalar(select(func.count()).select_from(AlertRecord).where(AlertRecord.active.is_(True))) or 0
         last_updates = [value[2] for value in states.values() if value[2] is not None]
-        if cache.inverter is not None:
-            last_updates.append(cache.inverter.timestamp)
+        if data_status.last_successful_update is not None:
+            last_updates.append(data_status.last_successful_update)
+        breakers_health = ComponentHealth.UNKNOWN
+        if areas:
+            online_areas = sum(1 for area in areas if area.online)
+            breakers_health = (
+                ComponentHealth.HEALTHY if online_areas == len(areas)
+                else ComponentHealth.DEGRADED if online_areas
+                else ComponentHealth.UNAVAILABLE
+            )
+        inverter_cloud_health = (
+            ComponentHealth.HEALTHY
+            if data_status.available and not data_status.stale
+            else ComponentHealth.DEGRADED
+            if data_status.last_successful_update is not None
+            else ComponentHealth.UNAVAILABLE
+        )
+        components = {
+            "inverter_cloud": inverter_cloud_health,
+            "breakers": breakers_health,
+            "database": ComponentHealth.HEALTHY,
+            "realtime": ComponentHealth.HEALTHY,
+        }
         health = OverallHealth.UNKNOWN
-        if states:
-            if offline == len(states):
+        known_components = [value for value in components.values() if value is not ComponentHealth.UNKNOWN]
+        if known_components:
+            if all(value is ComponentHealth.UNAVAILABLE for value in known_components[:2]):
                 health = OverallHealth.CRITICAL
-            elif offline or stale or active_alerts:
+            elif any(value is not ComponentHealth.HEALTHY for value in known_components) or active_alerts:
                 health = OverallHealth.DEGRADED
             else:
                 health = OverallHealth.HEALTHY
         return DashboardSystem(
-            overall_health=health, last_update=max(last_updates, default=None),
+            overall_health=health, system_status=health, components=components,
+            last_update=max(last_updates, default=None),
             online_devices=online, offline_devices=offline,
             stale_devices=stale, active_alerts=active_alerts,
         )

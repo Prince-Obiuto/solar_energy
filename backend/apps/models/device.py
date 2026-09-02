@@ -37,6 +37,43 @@ class DeviceStatus(str, Enum):
     OFF = "off"
 
 
+class ConnectivityType(str, Enum):
+    CLOUD = "cloud"
+    LOCAL = "local"
+
+
+class DataSource(str, Enum):
+    BEVE_CLOUD = "beve_cloud"
+    TINYTUYA = "tinytuya"
+
+
+class SourceStatus(str, Enum):
+    CONNECTED = "connected"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    TIMEOUT = "timeout"
+    UNREACHABLE = "unreachable"
+    CLOUD_ERROR = "cloud_error"
+    UNKNOWN = "unknown"
+
+
+class DataFreshness(str, Enum):
+    LIVE = "live"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
+
+
+class DataStatus(DomainModel):
+    """Availability of a telemetry source without inferring physical device state."""
+
+    connectivity_type: ConnectivityType
+    data_source: DataSource
+    available: bool = False
+    stale: bool = True
+    source_status: SourceStatus = SourceStatus.UNKNOWN
+    data_freshness: DataFreshness = DataFreshness.UNAVAILABLE
+    last_successful_update: datetime | None = None
+
+
 class FaultSeverity(str, Enum):
     """Normalized impact level of a reported device fault."""
 
@@ -103,6 +140,9 @@ class RegisteredDevice(DomainModel):
     friendly_name: str = Field(min_length=1)
     type: DeviceType
     area: str = Field(min_length=1)
-    online: bool
+    online: bool | None
     last_seen: datetime | None = None
+    connectivity_type: ConnectivityType
+    data_source: DataSource
+    data_status: DataStatus
     capabilities: DeviceCapability = Field(default_factory=DeviceCapability)

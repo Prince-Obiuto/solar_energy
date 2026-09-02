@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     api_v1_prefix: str = "/api/v1"
     cors_origins: str = Field(default="http://localhost:5173")
+    allowed_hosts: str = "localhost,127.0.0.1,testserver"
+    log_level: str = "INFO"
+    max_request_body_bytes: int = Field(default=1_048_576, ge=1024, le=10_485_760)
+    login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)
+    login_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     database_url: SecretStr = SecretStr("postgresql+psycopg://localhost/solar_energy")
     jwt_secret_key: SecretStr = SecretStr("development-only-change-me")
     jwt_algorithm: str = "HS256"
@@ -34,10 +39,21 @@ class Settings(BaseSettings):
     telemetry_retry_delay_seconds: float = Field(default=1, ge=0)
     websocket_heartbeat_interval_seconds: float = Field(default=20, gt=0)
     websocket_stale_after_seconds: float = Field(default=60, gt=0)
+    health_monitor_interval_seconds: float = Field(default=30, gt=0)
+    alert_low_voltage_v: float | None = Field(default=None, ge=0)
+    alert_high_voltage_v: float | None = Field(default=None, ge=0)
+    alert_high_current_a: float | None = Field(default=None, ge=0)
+    alert_high_power_w: float | None = Field(default=None, ge=0)
+    backup_destination: Path = BACKEND_DIR / "backups"
+    backup_secondary_destination: Path | None = None
+    backup_retention_days: int = Field(default=30, ge=1, le=3650)
+    backup_command: str = "pg_dump"
+    backup_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         case_sensitive=False,
         extra="ignore",
     )
@@ -48,10 +64,23 @@ class Settings(BaseSettings):
 
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    @property
+    def allowed_host_list(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
     @model_validator(mode="after")
     def require_production_jwt_secret(self) -> "Settings":
-        if self.app_env.lower() not in {"development", "test"} and self.jwt_secret_key.get_secret_value() == "development-only-change-me":
-            raise ValueError("JWT_SECRET_KEY must be configured outside development")
+        if self.app_env.lower() not in {"development", "test"}:
+            if self.jwt_secret_key.get_secret_value() == "development-only-change-me":
+                raise ValueError("JWT_SECRET_KEY must be configured outside development")
+            if "*" in self.cors_origin_list:
+                raise ValueError("Wildcard CORS origins are not allowed outside development")
+        return self
+
+    @model_validator(mode="after")
+    def validate_voltage_thresholds(self) -> "Settings":
+        if self.alert_low_voltage_v is not None and self.alert_high_voltage_v is not None and self.alert_low_voltage_v >= self.alert_high_voltage_v:
+            raise ValueError("ALERT_LOW_VOLTAGE_V must be lower than ALERT_HIGH_VOLTAGE_V")
         return self
 
 

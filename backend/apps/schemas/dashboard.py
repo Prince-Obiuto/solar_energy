@@ -6,8 +6,9 @@ from enum import Enum
 from pydantic import Field
 
 from apps.models import (
-    BatteryTelemetryStatus, DomainModel, GridTelemetryStatus,
+    BatteryTelemetryStatus, ConnectivityType, DataFreshness, DataSource, DataStatus, DomainModel, GridTelemetryStatus,
     InverterTelemetryStatus, SolarTelemetryStatus,
+    SourceStatus,
 )
 
 
@@ -18,8 +19,17 @@ class OverallHealth(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ComponentHealth(str, Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+
+
 class DashboardSystem(DomainModel):
     overall_health: OverallHealth
+    system_status: OverallHealth = OverallHealth.UNKNOWN
+    components: dict[str, ComponentHealth] = Field(default_factory=dict)
     last_update: datetime | None = None
     online_devices: int = Field(ge=0)
     offline_devices: int = Field(ge=0)
@@ -45,6 +55,12 @@ class DashboardSnapshot(DomainModel):
     battery: BatteryTelemetryStatus = Field(default_factory=BatteryTelemetryStatus)
     solar: SolarTelemetryStatus = Field(default_factory=SolarTelemetryStatus)
     grid: GridTelemetryStatus = Field(default_factory=GridTelemetryStatus)
+    data_status: DataStatus = Field(default_factory=lambda: DataStatus(
+        connectivity_type=ConnectivityType.CLOUD,
+        data_source=DataSource.BEVE_CLOUD,
+        source_status=SourceStatus.UNKNOWN,
+        data_freshness=DataFreshness.UNAVAILABLE,
+    ))
     areas: list[DashboardArea] = Field(default_factory=list)
 
 

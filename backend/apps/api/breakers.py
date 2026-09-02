@@ -12,6 +12,7 @@ from apps.schemas.control import (
     RelayRestoreModeRequest, SwitchRequest,
 )
 from apps.services.control_service import BreakerControlService
+from apps.realtime.manager import telemetry_event_publisher
 from apps.services.breaker_service import (
     BreakerNotFoundError,
     BreakerService,
@@ -40,7 +41,7 @@ async def retrieve_breaker(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Breaker not found") from None
 
 
-def execute_control(
+async def execute_control(
     *,
     breaker_id: str,
     action: str,
@@ -53,11 +54,18 @@ def execute_control(
     breakers: BreakerService,
 ) -> CommandResult:
     try:
-        return BreakerControlService(session, breakers).execute(
+        service = BreakerControlService(session, breakers)
+        result = service.execute(
             request_id=str(request_id), breaker_id=breaker_id, action=action,
             requested_value=value, user=user, reason=reason,
             client_ip=request.client.host if request.client else None,
         )
+        for event_type, alert in service.alert_changes:
+            await telemetry_event_publisher.publish(
+                event_type,
+                {"device_id": alert.device, "timestamp": alert.last_seen, "data": alert.model_dump(mode="json")},
+            )
+        return result
     except BreakerNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Breaker not found") from None
 
@@ -68,7 +76,7 @@ async def switch_breaker(
     user: UserRecord = Depends(require_admin), session: Session = Depends(get_db),
     breakers: BreakerService = Depends(get_breaker_service),
 ) -> CommandResult:
-    return execute_control(breaker_id=breaker_id, action="switch", value=payload.state, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
+    return await execute_control(breaker_id=breaker_id, action="switch", value=payload.state, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
 
 
 @router.put("/{breaker_id}/countdown", response_model=CommandResult)
@@ -77,7 +85,7 @@ async def set_countdown(
     user: UserRecord = Depends(require_admin), session: Session = Depends(get_db),
     breakers: BreakerService = Depends(get_breaker_service),
 ) -> CommandResult:
-    return execute_control(breaker_id=breaker_id, action="countdown", value=payload.seconds, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
+    return await execute_control(breaker_id=breaker_id, action="countdown", value=payload.seconds, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
 
 
 @router.put("/{breaker_id}/relay-restore-mode", response_model=CommandResult)
@@ -86,7 +94,7 @@ async def set_relay_restore_mode(
     user: UserRecord = Depends(require_admin), session: Session = Depends(get_db),
     breakers: BreakerService = Depends(get_breaker_service),
 ) -> CommandResult:
-    return execute_control(breaker_id=breaker_id, action="relay_restore_mode", value=payload.mode.value, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
+    return await execute_control(breaker_id=breaker_id, action="relay_restore_mode", value=payload.mode.value, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
 
 
 @router.put("/{breaker_id}/indicator-mode", response_model=CommandResult)
@@ -95,7 +103,7 @@ async def set_indicator_mode(
     user: UserRecord = Depends(require_admin), session: Session = Depends(get_db),
     breakers: BreakerService = Depends(get_breaker_service),
 ) -> CommandResult:
-    return execute_control(breaker_id=breaker_id, action="indicator_mode", value=payload.mode.value, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
+    return await execute_control(breaker_id=breaker_id, action="indicator_mode", value=payload.mode.value, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
 
 
 @router.put("/{breaker_id}/child-lock", response_model=CommandResult)
@@ -104,4 +112,4 @@ async def set_child_lock(
     user: UserRecord = Depends(require_admin), session: Session = Depends(get_db),
     breakers: BreakerService = Depends(get_breaker_service),
 ) -> CommandResult:
-    return execute_control(breaker_id=breaker_id, action="child_lock", value=payload.enabled, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)
+    return await execute_control(breaker_id=breaker_id, action="child_lock", value=payload.enabled, request_id=payload.request_id, reason=payload.reason, request=request, user=user, session=session, breakers=breakers)

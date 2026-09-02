@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { connectEnergySocket, subscribeConnectionStatus } from "../../services/realtime/energySocket";
+import { connectEnergySocket, stopEnergySocket, subscribeConnectionStatus } from "../../services/realtime/energySocket";
 
 export default function ConnectionStatus() {
   const [status, setStatus] = useState("connecting");
   useEffect(() => {
     const unsubscribe = subscribeConnectionStatus(setStatus);
     connectEnergySocket();
-    return unsubscribe;
+    return () => { unsubscribe(); stopEnergySocket(); };
   }, []);
   const connected = status === "connected";
   return (

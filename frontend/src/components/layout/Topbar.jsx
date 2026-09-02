@@ -8,7 +8,7 @@ import UserMenu from "./UserMenu";
 
 export default function Topbar({ isSidebarCollapsed, onOpenSidebar, onToggleSidebar }) {
   return (
-    <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-4 sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 sm:px-6">
       <div className="flex min-w-0 items-center gap-3">
         <button aria-label="Open navigation" className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 md:hidden" onClick={onOpenSidebar} type="button">
           <Bars3Icon className="size-5" />

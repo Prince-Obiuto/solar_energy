@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from apps.integrations.inverter import BeveIntegrationError, BeveMappingError
+from apps.integrations.inverter import (
+    BeveAuthenticationError, BeveCloudError, BeveConnectionError, BeveIncompleteResponseError,
+    BeveIntegrationError, BeveMalformedResponseError, BeveMappingError, BeveTimeoutError,
+)
 from apps.integrations.inverter.adapter import InverterAdapter
 from apps.models import (
     BatteryTelemetryStatus,
@@ -21,6 +24,10 @@ class InverterReader(Protocol):
 
 class ServiceUnavailableError(RuntimeError):
     """Raised when a service has no configured telemetry source."""
+
+    def __init__(self, message: str, *, category: str = "unreachable") -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class InverterService:
@@ -44,8 +51,18 @@ class InverterService:
             raise ServiceUnavailableError("Inverter monitoring is not configured")
         try:
             return self._adapter.read(self._client)
-        except (BeveIntegrationError, BeveMappingError):
-            raise ServiceUnavailableError("Inverter telemetry is unavailable") from None
+        except BeveAuthenticationError:
+            raise ServiceUnavailableError("BEVE cloud authentication failed", category="authentication_failed") from None
+        except BeveTimeoutError:
+            raise ServiceUnavailableError("BEVE cloud request timed out", category="timeout") from None
+        except (BeveMalformedResponseError, BeveIncompleteResponseError, BeveMappingError):
+            raise ServiceUnavailableError("BEVE cloud returned invalid telemetry", category="cloud_error") from None
+        except BeveConnectionError:
+            raise ServiceUnavailableError("BEVE cloud is unreachable", category="unreachable") from None
+        except BeveCloudError:
+            raise ServiceUnavailableError("BEVE cloud returned an error", category="cloud_error") from None
+        except BeveIntegrationError:
+            raise ServiceUnavailableError("BEVE cloud request failed", category="cloud_error") from None
 
     def get_battery_state(self) -> BatteryTelemetryStatus:
         return self.get_current_state().battery

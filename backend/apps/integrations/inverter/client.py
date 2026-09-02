@@ -47,6 +47,10 @@ class BeveConnectionError(BeveIntegrationError):
     """Raised when the BEVE service cannot be reached."""
 
 
+class BeveCloudError(BeveIntegrationError):
+    """Raised when the remote BEVE/Siseli service returns an HTTP error."""
+
+
 class BeveMalformedResponseError(BeveIntegrationError):
     """Raised when a BEVE response is not structurally valid JSON data."""
 
@@ -239,6 +243,10 @@ class BeveClient:
             raise BeveTimeoutError("BEVE request timed out") from None
         except requests.ConnectionError:
             raise BeveConnectionError("BEVE service is unreachable") from None
+        except requests.HTTPError:
+            if authentication_request:
+                raise BeveAuthenticationError("BEVE authentication request failed") from None
+            raise BeveCloudError("BEVE cloud returned an error") from None
         except requests.RequestException:
             if authentication_request:
                 raise BeveAuthenticationError("BEVE authentication request failed") from None

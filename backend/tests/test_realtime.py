@@ -158,8 +158,9 @@ async def test_publisher_emits_documented_inverter_message_types() -> None:
     serialized = str(socket.messages)
     assert types == [
         "inverter.status", "battery.status", "solar.status", "grid.status",
-        "energy.update", "device.online",
+        "energy.update", "system.status",
     ]
+    assert socket.messages[-1]["data"]["data_source"] == "beve_cloud"
     assert "must-not-leak" not in serialized
     assert "raw_datapoints" not in serialized
 

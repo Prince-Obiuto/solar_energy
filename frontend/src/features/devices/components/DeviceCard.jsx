@@ -14,7 +14,7 @@ export default function DeviceCard({ device }) {
           <DeviceIcon type={device.icon} />
           <div>
             <h3 className="font-semibold text-gray-900">{device.name}</h3>
-            <p className="mt-0.5 text-xs text-gray-500">Last seen {formatRelativeTime(device.lastSeen)}</p>
+            <p className="mt-0.5 text-xs text-gray-500">Last updated {formatRelativeTime(device.dataStatus?.last_successful_update || device.lastSeen)}</p>
           </div>
         </div>
         <StatusChip status={device.status} />
@@ -22,6 +22,8 @@ export default function DeviceCard({ device }) {
       <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4">
         <DeviceMetric label="Type" value={device.type || "N/A"} />
         <DeviceMetric label="Area" value={device.area || "N/A"} />
+        <DeviceMetric label="Connectivity" value={device.connectivityType || "N/A"} />
+        <DeviceMetric label="Data source" value={device.dataSource || "N/A"} />
       </dl>
       <div className="mt-5 rounded-lg bg-gray-50 p-3">
         <div className="flex items-center justify-between text-xs">

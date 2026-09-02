@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from apps.core.config import settings
 from apps.db.session import SessionLocal, session_scope
-from apps.models import BreakerDevice, DomainModel, InverterTelemetry
+from apps.models import (
+    BreakerDevice, ConnectivityType, DataFreshness, DataSource, DomainModel,
+    InverterTelemetry, SourceStatus,
+)
 from apps.models.persistence import (
     BatteryReadingRecord,
     BreakerReadingRecord,
@@ -53,11 +56,16 @@ class DeviceCollectionState(DomainModel):
     """Current reachability and freshness state for one source."""
 
     device_id: str
-    online: bool = False
+    online: bool | None = False
     stale: bool = True
     last_seen: datetime | None = None
     last_attempt: datetime | None = None
     consecutive_failures: int = 0
+    connectivity_type: ConnectivityType | None = None
+    data_source: DataSource | None = None
+    source_status: SourceStatus = SourceStatus.UNKNOWN
+    data_freshness: DataFreshness = DataFreshness.UNAVAILABLE
+    last_successful_update: datetime | None = None
 
 
 class CollectorSnapshot(DomainModel):
@@ -195,9 +203,9 @@ class EnergyCollector:
         self.config = config or CollectorConfig.from_application_settings()
         self._persistence = persistence
         if publisher is None:
-            from apps.realtime.manager import telemetry_event_publisher
+            from apps.jobs.health_monitor import health_event_publisher
 
-            publisher = telemetry_event_publisher
+            publisher = health_event_publisher
         self._publisher = publisher
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep
@@ -259,13 +267,24 @@ class EnergyCollector:
             now = self._clock()
             try:
                 telemetry = await self._with_retry(self._inverter_service.get_current_state)
-            except Exception:
-                await self._record_failure(source_id, now)
-                await self._publish("device.offline", {"device_id": source_id})
+            except Exception as exc:
+                source_status = self._beve_source_status(exc)
+                await self._record_inverter_failure(source_id, now, source_status)
+                await self._publish(
+                    "inverter.poll_failed",
+                    {"device_id": source_id, "timestamp": now, "failure_type": source_status.value},
+                )
+                await self._publish(
+                    "system.status",
+                    {"device_id": source_id, "timestamp": now, "data": {
+                        "component": "inverter_cloud", "status": "unavailable",
+                        "source_status": source_status.value,
+                    }},
+                )
                 return False
             async with self._state_lock:
                 self._snapshot.inverter = telemetry
-                self._record_success_locked(source_id, now)
+                self._record_inverter_success_locked(source_id, telemetry.timestamp)
             await self._persist_if_due(
                 source_id, lambda: self._persistence.persist_inverter(source_id, telemetry)
                 if self._persistence else None,
@@ -294,6 +313,14 @@ class EnergyCollector:
                     async with self._state_lock:
                         self._snapshot.breakers[breaker_id] = breaker
                 await self._record_failure(breaker_id, now)
+                await self._publish(
+                    "breaker.poll_failed",
+                    {
+                        "device_id": breaker_id,
+                        "timestamp": now,
+                        "failure_type": self._breaker_service.get_last_error_category(breaker_id) or "polling_failure",
+                    },
+                )
                 if breaker is not None:
                     await self._persist_if_due(
                         breaker_id,
@@ -351,7 +378,27 @@ class EnergyCollector:
             state.online = False
             state.last_attempt = attempted_at
             state.consecutive_failures += 1
-            state.stale = self._is_stale(state.last_seen, attempted_at)
+            state.stale = True
+            state.connectivity_type = ConnectivityType.LOCAL
+            state.data_source = DataSource.TINYTUYA
+            state.source_status = SourceStatus.UNREACHABLE
+            state.data_freshness = DataFreshness.STALE if state.last_seen else DataFreshness.UNAVAILABLE
+            state.last_successful_update = state.last_seen
+            self._snapshot.devices[source_id] = state
+
+    async def _record_inverter_failure(
+        self, source_id: str, attempted_at: datetime, source_status: SourceStatus
+    ) -> None:
+        async with self._state_lock:
+            state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
+            state.online = None
+            state.last_attempt = attempted_at
+            state.consecutive_failures += 1
+            state.connectivity_type = ConnectivityType.CLOUD
+            state.data_source = DataSource.BEVE_CLOUD
+            state.source_status = source_status
+            state.stale = state.last_successful_update is not None
+            state.data_freshness = DataFreshness.STALE if state.last_successful_update else DataFreshness.UNAVAILABLE
             self._snapshot.devices[source_id] = state
 
     def _record_success_locked(self, source_id: str, seen_at: datetime) -> None:
@@ -361,16 +408,47 @@ class EnergyCollector:
         state.last_seen = seen_at
         state.last_attempt = self._clock()
         state.consecutive_failures = 0
+        state.connectivity_type = ConnectivityType.LOCAL
+        state.data_source = DataSource.TINYTUYA
+        state.source_status = SourceStatus.CONNECTED
+        state.data_freshness = DataFreshness.LIVE
+        state.last_successful_update = seen_at
+        self._snapshot.devices[source_id] = state
+
+    def _record_inverter_success_locked(self, source_id: str, seen_at: datetime) -> None:
+        state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
+        state.online = None
+        state.stale = False
+        state.last_seen = seen_at
+        state.last_successful_update = seen_at
+        state.last_attempt = self._clock()
+        state.consecutive_failures = 0
+        state.connectivity_type = ConnectivityType.CLOUD
+        state.data_source = DataSource.BEVE_CLOUD
+        state.source_status = SourceStatus.CONNECTED
+        state.data_freshness = DataFreshness.LIVE
         self._snapshot.devices[source_id] = state
 
     def _refresh_stale_locked(self, now: datetime) -> None:
         for state in self._snapshot.devices.values():
-            state.stale = self._is_stale(state.last_seen, now)
+            timed_out = self._is_stale(state.last_successful_update or state.last_seen, now)
+            state.stale = state.stale or timed_out
+            if state.stale and state.data_freshness is DataFreshness.LIVE:
+                state.data_freshness = DataFreshness.STALE
 
     def _is_stale(self, last_seen: datetime | None, now: datetime) -> bool:
         if last_seen is None:
             return True
         return (now - last_seen).total_seconds() >= self.config.device_stale_after_seconds
+
+    @staticmethod
+    def _beve_source_status(exc: Exception) -> SourceStatus:
+        return {
+            "authentication_failed": SourceStatus.AUTHENTICATION_FAILED,
+            "timeout": SourceStatus.TIMEOUT,
+            "unreachable": SourceStatus.UNREACHABLE,
+            "cloud_error": SourceStatus.CLOUD_ERROR,
+        }.get(getattr(exc, "category", "unknown"), SourceStatus.UNKNOWN)
 
     async def _persist_if_due(
         self,

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from apps.api import auth, breakers, controls, dashboard, devices, energy, inverter, logs, reports, users
+from apps.api import alerts, auth, backups, breakers, controls, dashboard, devices, energy, inverter, logs, reports, users
 from apps.core.config import settings
 from apps.core.permissions import require_admin, require_staff, require_student
 from apps.realtime.websocket import router as websocket_router
@@ -23,6 +23,8 @@ async def health() -> dict[str, str]:
 
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+api_router.include_router(backups.router, prefix="/backups", tags=["backups"])
 api_router.include_router(breakers.router, prefix="/breakers", tags=["breakers"], dependencies=[Depends(require_staff)])
 api_router.include_router(controls.router, prefix="/controls", tags=["controls"], dependencies=[Depends(require_admin)])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(require_student)])

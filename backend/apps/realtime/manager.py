@@ -28,6 +28,9 @@ MESSAGE_TYPES = frozenset(
         "device.offline",
         "energy.update",
         "alert.created",
+        "alert.updated",
+        "alert.resolved",
+        "alert.acknowledged",
         "system.status",
     }
 )
@@ -83,6 +86,10 @@ class ConnectionManager:
     @property
     def connection_count(self) -> int:
         return len(self._connections)
+
+    @property
+    def heartbeat_healthy(self) -> bool:
+        return self._heartbeat_task is not None and not self._heartbeat_task.done()
 
     async def start(self) -> None:
         if self._heartbeat_task is None or self._heartbeat_task.done():
@@ -228,10 +235,17 @@ class TelemetryEventPublisher:
                         data={category: sanitize_payload(payload.get(category) or {}) for category in categories},
                     ),
                     RealtimeMessage(
-                        type="device.online",
+                        type="system.status",
                         device_id=payload.get("device_id"),
                         timestamp=timestamp,
-                        data={"online": True},
+                        data={
+                            "component": "inverter_cloud",
+                            "status": "healthy",
+                            "connectivity_type": "cloud",
+                            "data_source": "beve_cloud",
+                            "source_status": "connected",
+                            "data_freshness": "live",
+                        },
                     ),
                 ]
             )
@@ -264,11 +278,29 @@ class TelemetryEventPublisher:
     def messages_for_snapshot(self, snapshot: CollectorSnapshot) -> list[RealtimeMessage]:
         messages: list[RealtimeMessage] = []
         if snapshot.inverter is not None:
-            messages.extend(
-                self.messages_for_event(
-                    "inverter.telemetry", snapshot.inverter.model_dump(mode="json")
-                )
+            inverter_messages = self.messages_for_event(
+                "inverter.telemetry", snapshot.inverter.model_dump(mode="json")
             )
+            source_state = next(
+                (state for state in snapshot.devices.values() if state.data_source and state.data_source.value == "beve_cloud"),
+                None,
+            )
+            if source_state is not None:
+                inverter_messages[-1] = RealtimeMessage(
+                    type="system.status",
+                    device_id=source_state.device_id,
+                    timestamp=source_state.last_successful_update or self._clock(),
+                    data={
+                        "component": "inverter_cloud",
+                        "status": "healthy" if source_state.source_status.value == "connected" and not source_state.stale else "unavailable",
+                        "connectivity_type": "cloud",
+                        "data_source": "beve_cloud",
+                        "source_status": source_state.source_status.value,
+                        "data_freshness": source_state.data_freshness.value,
+                        "last_successful_update": source_state.last_successful_update,
+                    },
+                )
+            messages.extend(inverter_messages)
         for breaker in snapshot.breakers.values():
             messages.extend(
                 self.messages_for_event("breaker.telemetry", breaker.model_dump(mode="json"))

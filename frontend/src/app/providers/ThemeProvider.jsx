@@ -1,13 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
-import useSettingsStore from "../../features/settings/store/settings.store";
 import ThemeContext from "./ThemeContext";
 
 const DARK_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 export default function ThemeProvider({ children }) {
-  const theme = useSettingsStore((state) => state.settings.appearance.theme);
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
+  const [theme, setThemeState] = useState(() => window.localStorage.getItem("energy-theme") || "System");
   const [systemTheme, setSystemTheme] = useState(() => window.matchMedia(DARK_MEDIA_QUERY).matches ? "Dark" : "Light");
   const resolvedTheme = theme === "System" ? systemTheme : theme;
 
@@ -26,10 +24,10 @@ export default function ThemeProvider({ children }) {
 
   const value = useMemo(() => ({
     resolvedTheme,
-    setTheme: (nextTheme) => updateSetting("appearance", "theme", nextTheme),
+    setTheme: (nextTheme) => { window.localStorage.setItem("energy-theme", nextTheme); setThemeState(nextTheme); },
     theme,
-    toggleTheme: () => updateSetting("appearance", "theme", resolvedTheme === "Dark" ? "Light" : "Dark"),
-  }), [resolvedTheme, theme, updateSetting]);
+    toggleTheme: () => { const next = resolvedTheme === "Dark" ? "Light" : "Dark"; window.localStorage.setItem("energy-theme", next); setThemeState(next); },
+  }), [resolvedTheme, theme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

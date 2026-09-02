@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from apps.core.config import settings
@@ -19,6 +20,8 @@ from apps.integrations.tuya.constants import (
 from apps.models import CommandResult, CommandStatus
 from apps.models.persistence import ControlEventRecord, DeviceRecord, UserRecord
 from apps.services.breaker_service import BreakerNotFoundError, BreakerService
+from apps.schemas.alert import AlertSeverity
+from apps.services.alert_service import AlertService
 
 
 class BreakerControlService:
@@ -42,6 +45,8 @@ class BreakerControlService:
         self.sleep = sleep
         self.clock = clock or (lambda: datetime.now(UTC))
         self.verify_delay_seconds = settings.tuya_control_verify_delay_seconds if verify_delay_seconds is None else verify_delay_seconds
+        self.alerts = AlertService(session, clock=self.clock)
+        self.alert_changes = []
 
     def execute(
         self,
@@ -74,7 +79,18 @@ class BreakerControlService:
                 details={"external_device_reference": breaker_id},
             )
             self.session.add(event)
-            self.session.flush()
+            try:
+                self.session.flush()
+            except IntegrityError:
+                # The unique request ID is the cross-process idempotency guard.
+                # A concurrent worker may have won after our initial lookup.
+                self.session.rollback()
+                duplicate = self.session.scalar(
+                    select(ControlEventRecord).where(ControlEventRecord.request_id == request_id)
+                )
+                if duplicate is None:
+                    raise
+                return self._result(duplicate, duplicate=True)
 
             capability = {
                 "switch": registration.capabilities.switching,
@@ -114,6 +130,19 @@ class BreakerControlService:
                 event.status = CommandStatus.REJECTED.value
                 event.error_information = "Command validation failed"
             event.completed_at = self.clock()
+            if event.status in {CommandStatus.FAILED.value, CommandStatus.TIMED_OUT.value}:
+                alert, created = self.alerts.raise_alert(
+                    dedup_key=f"{breaker_id}:breaker.control_failure",
+                    category="breaker.control_failure", severity=AlertSeverity.WARNING,
+                    message="Breaker control command failed verification or communication",
+                    device_reference=breaker_id,
+                    metadata={"action": action, "status": event.status},
+                )
+                self.alert_changes.append(("alert.created" if created else "alert.updated", self.alerts.view(alert)))
+            elif event.status == CommandStatus.SUCCEEDED.value:
+                alert = self.alerts.resolve(f"{breaker_id}:breaker.control_failure")
+                if alert:
+                    self.alert_changes.append(("alert.resolved", self.alerts.view(alert)))
             self.session.flush()
             return self._result(event)
 

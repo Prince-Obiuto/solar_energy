@@ -4,6 +4,7 @@ from .adapter import InverterAdapter
 from .client import (
     BeveAuthenticationError,
     BeveClient,
+    BeveCloudError,
     BeveConfig,
     BeveConnectionError,
     BeveIncompleteResponseError,
@@ -18,7 +19,7 @@ from .mapper import BeveMappingError, map_beve_telemetry, normalize_inverter_sna
 InverterClient = BeveClient
 
 __all__ = [
-    "BeveAuthenticationError", "BeveClient", "BeveConfig", "BeveConnectionError",
+    "BeveAuthenticationError", "BeveClient", "BeveCloudError", "BeveConfig", "BeveConnectionError",
     "BeveIncompleteResponseError", "BeveIntegrationError", "BeveMalformedResponseError",
     "BeveMappingError", "BeveTimeoutError", "InverterAdapter", "InverterClient",
     "MockBeveClient", "VERIFIED_BEVE_RESPONSE", "map_beve_telemetry",

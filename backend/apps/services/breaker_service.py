@@ -7,7 +7,10 @@ from datetime import UTC, datetime
 from typing import Callable, Protocol
 
 from apps.integrations.tuya.adapter import TuyaBreakerAdapter
-from apps.integrations.tuya.client import TuyaDeviceConfig, TuyaIntegrationError
+from apps.integrations.tuya.client import (
+    TuyaDeviceConfig, TuyaIntegrationError, TuyaMalformedResponseError,
+    TuyaOfflineError, TuyaTimeoutError,
+)
 from apps.models import BreakerDevice, BreakerStatus, DeviceCapability, DeviceStatus
 from apps.models.energy_reading import ElectricalMeasurement
 
@@ -48,6 +51,7 @@ class BreakerService:
         self._adapter = adapter or TuyaBreakerAdapter()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._last_seen: dict[str, datetime] = {}
+        self._last_error_category: dict[str, str] = {}
 
     @property
     def registered_breaker_ids(self) -> tuple[str, ...]:
@@ -63,8 +67,17 @@ class BreakerService:
         try:
             status = self._adapter.read(registration.client)
             self._last_seen[breaker_id] = self._clock()
+            self._last_error_category.pop(breaker_id, None)
             online = True
-        except TuyaIntegrationError:
+        except TuyaIntegrationError as exc:
+            if isinstance(exc, TuyaMalformedResponseError):
+                self._last_error_category[breaker_id] = "malformed_response"
+            elif isinstance(exc, TuyaTimeoutError):
+                self._last_error_category[breaker_id] = "polling_timeout"
+            elif isinstance(exc, TuyaOfflineError):
+                self._last_error_category[breaker_id] = "offline"
+            else:
+                self._last_error_category[breaker_id] = "polling_failure"
             status = BreakerStatus(
                 device_id=breaker_id,
                 name=registration.client.config.friendly_name,
@@ -100,6 +113,9 @@ class BreakerService:
         """Return an internal registration for other application services."""
 
         return self._registration(breaker_id)
+
+    def get_last_error_category(self, breaker_id: str) -> str | None:
+        return self._last_error_category.get(breaker_id)
 
     def _registration(self, breaker_id: str) -> BreakerRegistration:
         try:

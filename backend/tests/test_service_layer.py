@@ -134,8 +134,12 @@ def test_device_service_returns_unified_secret_free_registry(services) -> None:
 
     assert [device.type for device in registry] == [DeviceType.INVERTER, DeviceType.BREAKER]
     assert registry[0].area == "IT Department"
+    assert registry[0].online is None
+    assert registry[0].connectivity_type.value == "cloud"
+    assert registry[0].data_source.value == "beve_cloud"
     assert registry[1].friendly_name == "Library breaker"
     assert registry[1].online is True
+    assert registry[1].connectivity_type.value == "local"
     serialized = "".join(device.model_dump_json() for device in registry)
     assert "test-key-not-a-real-secret" not in serialized
     assert "192.0.2.20" not in serialized

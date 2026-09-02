@@ -11,20 +11,20 @@ export default function AppLayout() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex h-screen overflow-hidden bg-gray-50">
       <Sidebar
         isCollapsed={isSidebarCollapsed}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         onToggleCollapse={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar
           isSidebarCollapsed={isSidebarCollapsed}
           onOpenSidebar={() => setIsSidebarOpen(true)}
           onToggleSidebar={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
         />
-        <main className="flex-1 p-4 sm:p-6">
+        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6">
           <Suspense fallback={<div className="flex min-h-48 items-center justify-center"><Loader label="Loading page…" /></div>}>
             <Outlet />
           </Suspense>

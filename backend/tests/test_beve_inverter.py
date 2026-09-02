@@ -14,6 +14,7 @@ from Crypto.Cipher import AES
 from apps.integrations.inverter import (
     BeveAuthenticationError,
     BeveClient,
+    BeveCloudError,
     BeveConfig,
     BeveConnectionError,
     BeveIncompleteResponseError,
@@ -221,6 +222,13 @@ def test_connection_error_is_normalized(beve_config) -> None:
 
     with pytest.raises(BeveConnectionError, match="unreachable"):
         BeveClient(beve_config, session=session).login()
+
+
+def test_remote_service_error_is_normalized_as_cloud_error(beve_config) -> None:
+    session = FakeSession(posts=[login_response()], gets=[FakeResponse({}, status_code=503)])
+
+    with pytest.raises(BeveCloudError, match="cloud returned an error"):
+        BeveClient(beve_config, session=session).fetch_current_telemetry()
 
 
 def test_incomplete_telemetry_response_is_rejected(beve_config) -> None:

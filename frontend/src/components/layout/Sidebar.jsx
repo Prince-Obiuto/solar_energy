@@ -3,8 +3,10 @@ import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 
 import { navigationItems } from "./navigation";
+import { useAuth } from "../../app/providers/AuthContext";
 
 export default function Sidebar({ isCollapsed, isOpen, onClose, onToggleCollapse }) {
+  const { user } = useAuth();
   useEffect(() => {
     if (!isOpen) return undefined;
     const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
@@ -16,7 +18,7 @@ export default function Sidebar({ isCollapsed, isOpen, onClose, onToggleCollapse
     <>
       {isOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-gray-950/40 md:hidden" onClick={onClose} type="button" />}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-gray-800 bg-gray-950 text-white transition-all duration-200 md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex h-screen shrink-0 flex-col border-r border-gray-800 bg-gray-950 text-white transition-all duration-200 md:sticky md:top-0 md:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } ${isCollapsed ? "w-20" : "w-64"}`}
       >
@@ -30,7 +32,7 @@ export default function Sidebar({ isCollapsed, isOpen, onClose, onToggleCollapse
           </button>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Main navigation">
-          {navigationItems.map(({ icon: Icon, label, to }) => (
+          {navigationItems.filter((item) => item.roles.includes(user?.role)).map(({ icon: Icon, label, to }) => (
             <NavLink
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${

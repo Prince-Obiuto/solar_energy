@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.integrations.inverter import (
+    BeveAuthenticationError,
     BeveConnectionError,
     BeveTimeoutError,
     VERIFIED_BEVE_RESPONSE,
@@ -24,6 +25,7 @@ from apps.jobs.energy_collector import (
 )
 from apps.main import app
 from apps.models import DeviceCapability
+from apps.models import DataFreshness, SourceStatus
 from apps.services.breaker_service import BreakerRegistration, BreakerService
 from apps.services.inverter_service import InverterService
 
@@ -182,13 +184,13 @@ async def test_successful_collection_updates_cache_persistence_and_events() -> N
 
     assert snapshot.inverter is not None and snapshot.inverter.grid.voltage == 0
     assert snapshot.breakers["breaker-library"].status.electrical.active_power_watts == 0
-    assert snapshot.devices["inverter-test"].online is True
+    assert snapshot.devices["inverter-test"].online is None
+    assert snapshot.devices["inverter-test"].source_status is SourceStatus.CONNECTED
+    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.LIVE
     assert snapshot.devices["breaker-library"].last_seen == clock.now
     assert len(persistence.inverters) == 1
     assert len(persistence.breakers) == 1
-    assert {event[0] for event in publisher.events} == {
-        "inverter.telemetry", "breaker.telemetry"
-    }
+    assert {event[0] for event in publisher.events} == {"inverter.telemetry", "breaker.telemetry"}
 
 
 @pytest.mark.asyncio
@@ -206,7 +208,9 @@ async def test_beve_offline_does_not_stop_breaker_collection() -> None:
 
     assert inverter_result is False
     assert breaker_result is True
-    assert snapshot.devices["inverter-test"].online is False
+    assert snapshot.devices["inverter-test"].online is None
+    assert snapshot.devices["inverter-test"].source_status is SourceStatus.UNREACHABLE
+    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.UNAVAILABLE
     assert snapshot.devices["breaker-library"].online is True
 
 
@@ -246,7 +250,9 @@ async def test_bounded_retry_and_recovery() -> None:
 
     assert beve.calls == 2
     assert snapshot.devices["inverter-test"].consecutive_failures == 0
-    assert snapshot.devices["inverter-test"].online is True
+    assert snapshot.devices["inverter-test"].online is None
+    assert snapshot.devices["inverter-test"].source_status is SourceStatus.CONNECTED
+    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.LIVE
 
 
 @pytest.mark.asyncio
@@ -274,7 +280,37 @@ async def test_timeout_is_tracked_without_stopping_other_sources() -> None:
     )
 
     assert results == [False, True]
-    assert (await collector.get_snapshot()).devices["inverter-test"].consecutive_failures == 1
+    state = (await collector.get_snapshot()).devices["inverter-test"]
+    assert state.consecutive_failures == 1
+    assert state.source_status is SourceStatus.TIMEOUT
+    assert state.online is None
+
+
+@pytest.mark.asyncio
+async def test_beve_authentication_failure_retains_last_known_data_and_recovers() -> None:
+    clock = MutableClock()
+    beve = FakeBeveClient(
+        VERIFIED_BEVE_RESPONSE,
+        BeveAuthenticationError("authentication failed"),
+        VERIFIED_BEVE_RESPONSE,
+    )
+    collector = build_collector(clock, beve, [])
+
+    assert await collector.collect_inverter_once() is True
+    original = (await collector.get_snapshot()).inverter
+    clock.advance(5)
+    assert await collector.collect_inverter_once() is False
+    failed = await collector.get_snapshot()
+    assert failed.inverter == original
+    assert failed.devices["inverter-test"].source_status is SourceStatus.AUTHENTICATION_FAILED
+    assert failed.devices["inverter-test"].data_freshness is DataFreshness.STALE
+    assert failed.devices["inverter-test"].online is None
+
+    clock.advance(5)
+    assert await collector.collect_inverter_once() is True
+    recovered = await collector.get_snapshot()
+    assert recovered.devices["inverter-test"].source_status is SourceStatus.CONNECTED
+    assert recovered.devices["inverter-test"].data_freshness is DataFreshness.LIVE
 
 
 @pytest.mark.asyncio
@@ -286,8 +322,9 @@ async def test_stale_detection_uses_last_successful_read() -> None:
     clock.advance(91)
     snapshot = await collector.get_snapshot()
 
-    assert snapshot.devices["inverter-test"].online is True
+    assert snapshot.devices["inverter-test"].online is None
     assert snapshot.devices["inverter-test"].stale is True
+    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.STALE
 
 
 @pytest.mark.asyncio
