@@ -35,6 +35,10 @@ async def lifespan(application: FastAPI):
     finally:
         if collector is not None:
             await collector.stop()
+        from apps.core.runtime import get_application_runtime
+        runtime = get_application_runtime()
+        if runtime is not None:
+            runtime.breaker_service.close()
         await health_monitor.stop()
         await connection_manager.stop()
 

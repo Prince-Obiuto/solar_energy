@@ -44,6 +44,9 @@ class RelayClient:
             self.relay_on = value
         return {"dps": {str(datapoint): value}}
 
+    def set_switch_state(self, value):
+        return self.write_datapoint(1, value)
+
 
 def build_system(*, enabled=True, lecturer_on=True, admin_on=True, mismatch=False):
     engine = create_engine("sqlite+pysqlite://", poolclass=StaticPool,

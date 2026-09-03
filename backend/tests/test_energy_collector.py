@@ -17,7 +17,7 @@ from apps.integrations.inverter import (
     BeveTimeoutError,
     VERIFIED_BEVE_RESPONSE,
 )
-from apps.integrations.tuya.client import TuyaDeviceConfig, TuyaOfflineError
+from apps.integrations.tuya.client import TuyaDeviceConfig, TuyaOfflineError, TuyaTimeoutError
 from apps.jobs.energy_collector import (
     CollectorConfig,
     EnergyCollector,
@@ -110,6 +110,16 @@ class FakePublisher:
 
     async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
         self.events.append((event_type, payload))
+
+
+class FailingPublisher:
+    async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
+        raise RuntimeError("publisher unavailable")
+
+
+class FailingPersistence(FakePersistence):
+    def persist_breaker(self, device_reference: str, breaker, collected_at: datetime) -> None:
+        raise RuntimeError("database unavailable")
 
 
 def breaker_payload(*, power: float = 0) -> dict[str, object]:
@@ -231,6 +241,115 @@ async def test_one_offline_breaker_does_not_stop_other_breakers_or_beve() -> Non
     assert results == [True, False, True]
     assert snapshot.devices["breaker-library"].online is False
     assert snapshot.breakers["breaker-admin"].status.electrical.active_power_watts == 75
+
+
+@pytest.mark.asyncio
+async def test_relay_off_is_online_and_zero_values_are_preserved() -> None:
+    clock = MutableClock()
+    payload = breaker_payload()
+    payload["dps"]["1"] = False  # type: ignore[index]
+    breaker = FakeTuyaClient("breaker-library", "Library", payload)
+    collector = build_collector(clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [breaker])
+
+    assert await collector.collect_breaker_once("breaker-library") is True
+    result = (await collector.get_snapshot()).breakers["breaker-library"]
+    assert result.online is True
+    assert result.status.switch_on is False
+    assert result.status.electrical.current_amperes == 0
+    assert result.status.electrical.active_power_watts == 0
+
+
+@pytest.mark.asyncio
+async def test_breaker_timeout_recovers_on_the_next_poll_without_collector_retry() -> None:
+    clock = MutableClock()
+    breaker = FakeTuyaClient(
+        "breaker-library", "Library", TuyaTimeoutError("timeout"), breaker_payload(power=12)
+    )
+    collector = build_collector(clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [breaker])
+
+    assert await collector.collect_breaker_once("breaker-library") is False
+    failed = (await collector.get_snapshot()).devices["breaker-library"]
+    assert failed.online is False
+    assert failed.last_failure_category == "polling_timeout"
+    clock.advance(10)
+    assert await collector.collect_breaker_once("breaker-library") is True
+    recovered = await collector.get_snapshot()
+    assert breaker.calls == 2
+    assert recovered.breakers["breaker-library"].online is True
+    assert recovered.devices["breaker-library"].stale is False
+    assert recovered.devices["breaker-library"].consecutive_failures == 0
+    assert recovered.devices["breaker-library"].last_failure_category is None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_poll_iteration_does_not_kill_loop() -> None:
+    clock = MutableClock()
+    collector = build_collector(clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [])
+    attempts = 0
+
+    async def collect() -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("test programming error")
+        collector._running = False
+        return True
+
+    async def immediate_sleep(seconds: float) -> None:
+        return None
+
+    collector._running = True
+    collector._sleep = immediate_sleep
+    await collector._poll_loop("breaker-test", 1, collect)
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_unexpected_breaker_error_is_not_reported_as_confirmed_offline() -> None:
+    clock = MutableClock()
+    breaker = FakeTuyaClient("breaker-library", "Library", RuntimeError("programming error"))
+    collector = build_collector(clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [breaker])
+
+    assert await collector.collect_breaker_once("breaker-library") is False
+    state = (await collector.get_snapshot()).devices["breaker-library"]
+    assert state.online is None
+    assert state.last_failure_category == "internal_error"
+    assert state.source_status is SourceStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_persistence_and_publisher_failures_do_not_block_later_polling() -> None:
+    clock = MutableClock()
+    breaker = FakeTuyaClient("breaker-library", "Library", breaker_payload(), breaker_payload(power=9))
+    collector = build_collector(
+        clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [breaker],
+        persistence=FailingPersistence(), publisher=FailingPublisher(),
+    )
+
+    assert await collector.collect_breaker_once("breaker-library") is True
+    clock.advance(10)
+    assert await collector.collect_breaker_once("breaker-library") is True
+    assert breaker.calls == 2
+    assert (await collector.get_snapshot()).breakers[
+        "breaker-library"
+    ].status.electrical.active_power_watts == 9
+
+
+@pytest.mark.asyncio
+async def test_stale_is_separate_from_last_confirmed_online_state() -> None:
+    clock = MutableClock()
+    breaker = FakeTuyaClient("breaker-library", "Library", breaker_payload())
+    collector = build_collector(
+        clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [breaker],
+        config=collector_config(device_stale_after_seconds=30),
+    )
+    await collector.collect_breaker_once("breaker-library")
+    clock.advance(31)
+
+    snapshot = await collector.get_snapshot()
+    assert snapshot.devices["breaker-library"].online is True
+    assert snapshot.devices["breaker-library"].stale is True
+    assert snapshot.breakers["breaker-library"].online is True
 
 
 @pytest.mark.asyncio

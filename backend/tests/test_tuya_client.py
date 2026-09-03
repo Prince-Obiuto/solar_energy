@@ -32,7 +32,9 @@ class FakeTinyTuyaDevice:
     def __init__(self, outcome: Any) -> None:
         self.outcome = outcome
         self.versions: list[float] = []
+        self.persistent: list[bool] = []
         self.closed = False
+        self.status_writes: list[tuple[bool, int]] = []
 
     def set_version(self, version: float) -> None:
         self.versions.append(version)
@@ -42,7 +44,16 @@ class FakeTinyTuyaDevice:
             raise self.outcome
         return self.outcome
 
+    def set_socketPersistent(self, persist: bool) -> None:
+        self.persistent.append(persist)
+
     def set_value(self, index: int, value: Any, nowait: bool = False) -> Any:
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+    def set_status(self, on: bool, switch: int = 1, nowait: bool = False) -> Any:
+        self.status_writes.append((on, switch))
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
@@ -88,22 +99,26 @@ def build_client(
     return TuyaClient(
         config,
         device_factory=factory,
+        discovery=lambda **kwargs: None,
         max_attempts=max_attempts,
         socket_timeout_seconds=1,
     )
 
 
-def test_successful_status_read_configures_protocol_and_closes_socket(device_config) -> None:
+def test_successful_reads_reuse_one_persistent_device(device_config) -> None:
     response = {"dps": {"1": True, "6": 0}}
     factory = FakeDeviceFactory(response)
+    client = build_client(device_config, factory)
 
-    result = build_client(device_config, factory).read_status()
+    assert [client.read_status() for _ in range(3)] == [response, response, response]
 
-    assert result == response
     assert factory.calls[0]["version"] == 3.5
-    assert factory.calls[0]["connection_retry_limit"] == 0
+    assert factory.calls[0]["connection_retry_limit"] == 1
+    assert factory.calls[0]["persist"] is True
     assert factory.devices[0].versions == [3.5]
-    assert factory.devices[0].closed is True
+    assert factory.devices[0].persistent == [True]
+    assert factory.devices[0].closed is False
+    assert len(factory.calls) == 1
 
 
 def test_timeout_is_normalized(device_config) -> None:
@@ -158,7 +173,9 @@ def test_retry_reconnects_and_is_bounded(device_config) -> None:
 
     assert client.read_status() == response
     assert len(factory.calls) == 3
-    assert all(device.closed for device in factory.devices)
+    assert factory.devices[0].closed is True
+    assert factory.devices[1].closed is True
+    assert factory.devices[2].closed is False
 
 
 def test_arbitrary_client_exception_is_normalized(device_config) -> None:
@@ -201,7 +218,7 @@ def test_control_write_configures_protocol_and_normalizes_failures(device_config
     result = build_client(device_config, factory).write_datapoint(1, True)
     assert result == {"dps": {"1": True}}
     assert factory.devices[0].versions == [3.5]
-    assert factory.devices[0].closed is True
+    assert factory.devices[0].closed is False
 
     with pytest.raises(TuyaTimeoutError):
         build_client(device_config, FakeDeviceFactory(socket.timeout("secret detail"))).write_datapoint(1, True)
@@ -209,8 +226,58 @@ def test_control_write_configures_protocol_and_normalizes_failures(device_config
         build_client(device_config, FakeDeviceFactory({"Error": "failure", "Err": "999"})).write_datapoint(1, True)
 
 
+def test_switch_uses_native_outlet_command_and_validates_acknowledgement(device_config) -> None:
+    factory = FakeDeviceFactory({"dps": {"1": False}})
+    client = build_client(device_config, factory)
+    assert client.set_switch_state(False) == {"dps": {"1": False}}
+    assert factory.devices[0].status_writes == [(False, 1)]
+    assert factory.devices[0].closed is False
+
+    failed = build_client(device_config, FakeDeviceFactory({"Error": "failure", "Err": "999"}))
+    with pytest.raises(TuyaCommunicationError, match="not acknowledged"):
+        failed.set_switch_state(False)
+
+
 def test_control_write_rejects_non_allowlisted_datapoints_before_connection(device_config) -> None:
     factory = FakeDeviceFactory({"dps": {"22": 1}})
     with pytest.raises(TuyaConfigurationError, match="not permitted"):
         build_client(device_config, factory).write_datapoint(22, 1)
     assert factory.calls == []
+
+
+def test_failed_connection_rediscovery_rebuilds_with_verified_address(device_config) -> None:
+    factory = FakeDeviceFactory(OSError(), {"dps": {"1": False}})
+    discoveries = []
+
+    def discover(**kwargs):
+        discoveries.append(kwargs)
+        return {"id": device_config.device_id, "ip": "192.0.2.99", "version": "3.5"}
+
+    client = TuyaClient(device_config, device_factory=factory, discovery=discover,
+                        max_attempts=2, socket_timeout_seconds=1)
+    assert client.read_status()["dps"]["1"] is False
+    assert discoveries == [{"dev_id": device_config.device_id}]
+    assert factory.calls[1]["address"] == "192.0.2.99"
+    assert client.rediscovery_used is True
+
+
+def test_discovery_rejects_wrong_device_id(device_config) -> None:
+    factory = FakeDeviceFactory(OSError(), OSError())
+    client = TuyaClient(
+        device_config, device_factory=factory,
+        discovery=lambda **kwargs: {"id": "another-device", "ip": "192.0.2.99"},
+        max_attempts=2, socket_timeout_seconds=1,
+    )
+    with pytest.raises(TuyaOfflineError):
+        client.read_status()
+    assert factory.calls[1]["address"] == str(device_config.ip_address)
+    assert client.rediscovery_used is False
+
+
+def test_close_releases_persistent_device(device_config) -> None:
+    factory = FakeDeviceFactory({"dps": {"1": True}})
+    client = build_client(device_config, factory)
+    client.read_status()
+    client.close()
+    assert factory.devices[0].closed is True
+    assert client.persistent_connection_created is False

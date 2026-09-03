@@ -34,6 +34,7 @@ class FakeControlClient:
         self.read_error = None
         self.write_error = None
         self.writes = []
+        self.switch_writes = []
 
     def read_status(self):
         if self.read_error:
@@ -46,6 +47,12 @@ class FakeControlClient:
             raise self.write_error
         self.writes.append((datapoint, value))
         return {"dps": {str(datapoint): value}}
+
+    def set_switch_state(self, value):
+        if self.write_error:
+            raise self.write_error
+        self.switch_writes.append(value)
+        return {"dps": {"1": value}}
 
 
 @pytest.fixture
@@ -121,7 +128,7 @@ def test_admin_success_requires_readback_and_creates_audit(control_context) -> N
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
     assert response.json()["data"]["verified_value"] is True
-    assert fake.writes == [(1, True)]
+    assert fake.switch_writes == [True]
     with factory() as session:
         event = session.scalar(select(ControlEventRecord).where(ControlEventRecord.request_id == str(request_id)))
         assert event.user_id == users[UserRole.ADMIN].id
@@ -129,6 +136,21 @@ def test_admin_success_requires_readback_and_creates_audit(control_context) -> N
         assert event.previous_value is False and event.requested_value is True
         assert event.hardware_acknowledgement is True and event.verified_value is True
         assert event.client_ip and event.completed_at and event.status == "succeeded"
+
+
+def test_admin_relay_off_uses_verified_native_switch_result(control_context) -> None:
+    client, _, fake, users = control_context
+    fake.read_values = [True, False]
+    response = client.post(
+        "/api/v1/breakers/breaker-control-test/switch",
+        headers=headers(users[UserRole.ADMIN]), json=switch_payload(state=False),
+    )
+    assert response.json()["status"] == "succeeded"
+    assert response.json()["data"] == {
+        "duplicate": False, "previous_value": True, "requested_value": False,
+        "hardware_acknowledgement": True, "verified_value": False,
+    }
+    assert fake.switch_writes == [False]
 
 
 @pytest.mark.parametrize(
@@ -207,7 +229,7 @@ def test_duplicate_request_returns_original_without_second_write(control_context
     second = client.post("/api/v1/breakers/breaker-control-test/switch", headers=headers(users[UserRole.ADMIN]), json=payload)
     assert first.json()["status"] == second.json()["status"] == "succeeded"
     assert second.json()["data"]["duplicate"] is True
-    assert fake.writes == [(1, True)]
+    assert fake.switch_writes == [True]
 
 
 def test_calibration_and_unknown_datapoints_have_no_write_surface() -> None:

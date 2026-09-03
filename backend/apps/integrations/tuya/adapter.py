@@ -65,7 +65,7 @@ class TuyaBreakerAdapter:
         return self.from_raw(raw_state)
 
     def set_switch(self, client: TuyaClient, value: bool) -> dict[str, Any]:
-        return client.write_datapoint(DP_SWITCH, value)
+        return client.set_switch_state(value)
 
     def set_countdown(self, client: TuyaClient, seconds: int) -> dict[str, Any]:
         if not 0 <= seconds <= 86400:

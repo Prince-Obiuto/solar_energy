@@ -22,6 +22,8 @@ class BreakerReader(Protocol):
 
     def read_status(self) -> dict[str, object]: ...
 
+    def close(self) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class BreakerRegistration:
@@ -139,6 +141,14 @@ class BreakerService:
 
     def get_last_error_category(self, breaker_id: str) -> str | None:
         return self._last_error_category.get(breaker_id)
+
+    def close(self) -> None:
+        """Close every persistent breaker connection during shutdown."""
+        for registration in self._registrations.values():
+            close = getattr(registration.client, "close", None)
+            if close is not None:
+                try: close()
+                except Exception: pass
 
     @contextmanager
     def hardware_access(self, breaker_id: str):

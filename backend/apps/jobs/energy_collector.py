@@ -234,6 +234,7 @@ class EnergyCollector:
         self._last_persisted: dict[str, datetime] = {}
         self._last_persisted_online: dict[str, bool] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._task_health: dict[str, dict[str, Any]] = {}
         self._running = False
         self._last_load_management_status: dict[str, Any] | None = None
         self._last_persisted_inverter_source_timestamp: datetime | None = None
@@ -354,41 +355,73 @@ class EnergyCollector:
     async def collect_breaker_once(self, breaker_id: str) -> bool:
         async with self._source_lock(breaker_id):
             now = self._clock()
-            breaker: BreakerDevice | None = None
-            for attempt in range(self.config.retry_attempts):
-                try:
-                    breaker = await self._run_sync(self._breaker_service.get_breaker, breaker_id)
-                except Exception:
-                    breaker = None
-                if breaker is not None and breaker.online:
-                    break
-                if attempt + 1 < self.config.retry_attempts and self.config.retry_delay_seconds:
-                    await self._sleep(self.config.retry_delay_seconds)
+            started = self._monotonic()
+            breaker: BreakerDevice | None
+            unexpected = False
+            try:
+                # TuyaClient owns bounded communication retries. The collector
+                # records one resulting poll outcome and waits for the next cadence.
+                breaker = await self._run_sync(self._breaker_service.get_breaker, breaker_id)
+            except Exception:
+                breaker = None
+                unexpected = True
+                logger.exception(
+                    "Unexpected breaker polling error device_id=%s category=internal_error",
+                    breaker_id,
+                )
             if breaker is None or not breaker.online:
-                if breaker is not None:
-                    async with self._state_lock:
-                        self._snapshot.breakers[breaker_id] = breaker
-                await self._record_failure(breaker_id, now)
+                prior_state = self._snapshot.devices.get(breaker_id)
+                category = (
+                    "internal_error" if unexpected
+                    else self._breaker_service.get_last_error_category(breaker_id) or "polling_failure"
+                )
+                confirms_offline = category in {"polling_timeout", "offline", "polling_failure"}
+                async with self._state_lock:
+                    previous = self._snapshot.breakers.get(breaker_id)
+                    if confirms_offline:
+                        self._snapshot.breakers[breaker_id] = self._offline_view(
+                            breaker_id, previous, breaker
+                        )
+                await self._record_failure(
+                    breaker_id, now, category=category, confirms_offline=confirms_offline
+                )
+                logger.warning(
+                    "Breaker poll failed device_id=%s category=%s client_attempts=%s",
+                    breaker_id, category,
+                    getattr(self._breaker_service.get_registration(breaker_id).client, "max_attempts", 1),
+                )
+                if confirms_offline and (prior_state is None or prior_state.online is not False):
+                    logger.info("Breaker changed online -> offline device_id=%s", breaker_id)
                 await self._publish(
                     "breaker.poll_failed",
                     {
                         "device_id": breaker_id,
                         "timestamp": now,
-                        "failure_type": self._breaker_service.get_last_error_category(breaker_id) or "polling_failure",
+                        "failure_type": category,
                     },
                 )
-                if breaker is not None:
+                if confirms_offline and breaker is not None:
                     await self._persist_if_due(
-                        breaker_id,
-                        lambda: self._persistence.persist_breaker(breaker_id, breaker, now)
+                        breaker_id, lambda: self._persistence.persist_breaker(
+                            breaker_id, self._snapshot.breakers[breaker_id], now
+                        )
                         if self._persistence else None,
                         online=False,
                     )
-                await self._publish("breaker.offline", {"device_id": breaker_id})
+                if confirms_offline:
+                    await self._publish("breaker.offline", {"device_id": breaker_id})
                 return False
+            previous_online = self._snapshot.devices.get(breaker_id)
             async with self._state_lock:
                 self._snapshot.breakers[breaker_id] = breaker
-                self._record_success_locked(breaker_id, breaker.last_seen or now)
+                successful_at = self._clock()
+                self._record_success_locked(breaker_id, successful_at)
+            if previous_online is not None and previous_online.online is False:
+                logger.info("Breaker recovered device_id=%s online=true", breaker_id)
+            logger.debug(
+                "Breaker poll succeeded device_id=%s online=true duration_seconds=%.3f",
+                breaker_id, self._monotonic() - started,
+            )
             await self._persist_if_due(
                 breaker_id, lambda: self._persistence.persist_breaker(breaker_id, breaker, now)
                 if self._persistence else None,
@@ -411,7 +444,15 @@ class EnergyCollector:
         next_run = self._monotonic()
         try:
             while self._running:
-                await collect()
+                try:
+                    await collect()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Collector iteration failed source_id=%s; polling will continue",
+                        source_id,
+                    )
                 next_run += interval
                 now = self._monotonic()
                 if next_run < now:
@@ -433,18 +474,33 @@ class EnergyCollector:
             raise RuntimeError("Telemetry collection failed")
         raise last_error
 
-    async def _record_failure(self, source_id: str, attempted_at: datetime) -> None:
+    async def _record_failure(
+        self, source_id: str, attempted_at: datetime, *,
+        category: str = "polling_failure", confirms_offline: bool = True,
+    ) -> None:
         async with self._state_lock:
             state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
-            state.online = False
+            if confirms_offline:
+                state.online = False
+            elif state.last_successful_poll_at is None:
+                # A mapper/programming failure does not prove LAN reachability
+                # either way when no prior successful poll exists.
+                state.online = None
             state.last_attempt = attempted_at
             state.last_attempt_at = attempted_at
             state.consecutive_failures += 1
-            state.stale = True
+            state.stale = self._is_stale(state.last_successful_poll_at or state.last_seen, attempted_at)
             state.connectivity_type = ConnectivityType.LOCAL
             state.data_source = DataSource.TINYTUYA
-            state.source_status = SourceStatus.UNREACHABLE
-            state.data_freshness = DataFreshness.STALE if state.last_seen else DataFreshness.UNAVAILABLE
+            state.source_status = (
+                SourceStatus.UNREACHABLE if confirms_offline else SourceStatus.UNKNOWN
+            )
+            state.last_failure_category = category
+            state.data_freshness = (
+                DataFreshness.STALE if state.stale and state.last_seen
+                else DataFreshness.LIVE if state.last_seen
+                else DataFreshness.UNAVAILABLE
+            )
             state.last_successful_update = state.last_seen
             self._snapshot.devices[source_id] = state
 
@@ -479,6 +535,7 @@ class EnergyCollector:
         state.data_freshness = DataFreshness.LIVE
         state.last_successful_update = seen_at
         state.last_successful_poll_at = seen_at
+        state.last_failure_category = None
         self._snapshot.devices[source_id] = state
 
     def _record_inverter_success_locked(
@@ -586,7 +643,10 @@ class EnergyCollector:
             if inspect.isawaitable(result):
                 await result
         except Exception:
-            return
+            logger.exception(
+                "Telemetry event publication failed event_type=%s device_id=%s",
+                event_type, payload.get("device_id", "system"),
+            )
 
     def _source_lock(self, source_id: str) -> asyncio.Lock:
         return self._source_locks.setdefault(source_id, asyncio.Lock())
@@ -606,7 +666,40 @@ class EnergyCollector:
     def _create_task(self, coroutine: Awaitable[None], name: str) -> None:
         task = asyncio.create_task(coroutine, name=name)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._task_health[name] = {"running": True, "last_failure": None}
+
+        def completed(done: asyncio.Task[None]) -> None:
+            self._tasks.discard(done)
+            health = self._task_health.setdefault(name, {})
+            health["running"] = False
+            if done.cancelled():
+                return
+            error = done.exception()
+            if error is not None:
+                health["last_failure"] = type(error).__name__
+                logger.error(
+                    "Collector task terminated unexpectedly task_name=%s error_type=%s",
+                    name, type(error).__name__, exc_info=(type(error), error, error.__traceback__),
+                )
+            elif self._running:
+                logger.error("Collector task exited unexpectedly task_name=%s", name)
+
+        task.add_done_callback(completed)
+
+    def get_task_health(self) -> dict[str, dict[str, Any]]:
+        """Return a secret-free copy of internal poll-task health."""
+
+        return {name: values.copy() for name, values in self._task_health.items()}
+
+    def _offline_view(
+        self, breaker_id: str, previous: BreakerDevice | None,
+        failed: BreakerDevice | None,
+    ) -> BreakerDevice:
+        """Preserve last-known measurements while recording confirmed reachability failure."""
+
+        base = previous or failed or self._breaker_service.describe_breaker(breaker_id)
+        status = base.status.model_copy(update={"status": "offline"})
+        return base.model_copy(update={"online": False, "status": status})
 
 
 _application_collector: EnergyCollector | None = None

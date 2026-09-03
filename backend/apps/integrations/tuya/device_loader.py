@@ -55,7 +55,7 @@ def load_breaker_registrations(
                 area=entry.get("area") or entry.get("name"),
                 local_key=entry.get("key"),
                 ip_address=entry.get("ip"),
-                protocol_version=str(entry.get("version") or DEFAULT_PROTOCOL_VERSION),
+                protocol_version=str(entry.get("version") or entry.get("ver") or DEFAULT_PROTOCOL_VERSION),
                 enabled=entry.get("enabled", True),
             )
         except ValidationError:

@@ -8,6 +8,6 @@ const ICONS = {
 };
 
 export default function LogLevelIcon({ level }) {
-  const { icon: Icon, tone } = ICONS[level];
+  const { icon: Icon, tone } = ICONS[level] ?? ICONS.info;
   return <Icon className={`size-5 ${tone}`} />;
 }
