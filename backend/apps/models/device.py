@@ -72,6 +72,12 @@ class DataStatus(DomainModel):
     source_status: SourceStatus = SourceStatus.UNKNOWN
     data_freshness: DataFreshness = DataFreshness.UNAVAILABLE
     last_successful_update: datetime | None = None
+    last_attempt_at: datetime | None = None
+    last_successful_poll_at: datetime | None = None
+    source_timestamp: datetime | None = None
+    source_changed: bool | None = None
+    source_age_seconds: float | None = Field(default=None, ge=0)
+    last_failure_category: str | None = None
 
 
 class FaultSeverity(str, Enum):

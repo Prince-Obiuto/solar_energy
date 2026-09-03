@@ -222,6 +222,7 @@ class TelemetryEventPublisher:
     ) -> list[RealtimeMessage]:
         timestamp = self._timestamp(payload.get("timestamp") or payload.get("last_seen"))
         if event_type == "inverter.telemetry":
+            source = payload.get("data_status") if isinstance(payload.get("data_status"), dict) else {}
             categories = ("inverter", "battery", "solar", "grid")
             messages = [
                 RealtimeMessage(
@@ -247,8 +248,12 @@ class TelemetryEventPublisher:
                             "status": "healthy",
                             "connectivity_type": "cloud",
                             "data_source": "beve_cloud",
-                            "source_status": "connected",
-                            "data_freshness": "live",
+                            "source_status": source.get("source_status", "connected"),
+                            "data_freshness": source.get("data_freshness", "live"),
+                            "last_successful_poll_at": source.get("last_successful_poll_at"),
+                            "source_timestamp": source.get("source_timestamp", payload.get("timestamp")),
+                            "source_changed": source.get("source_changed"),
+                            "source_age_seconds": source.get("source_age_seconds"),
                         },
                     ),
                 ]
@@ -302,6 +307,12 @@ class TelemetryEventPublisher:
                         "source_status": source_state.source_status.value,
                         "data_freshness": source_state.data_freshness.value,
                         "last_successful_update": source_state.last_successful_update,
+                        "last_attempt_at": source_state.last_attempt_at,
+                        "last_successful_poll_at": source_state.last_successful_poll_at,
+                        "source_timestamp": source_state.source_timestamp,
+                        "source_changed": source_state.source_changed,
+                        "source_age_seconds": source_state.source_age_seconds,
+                        "last_failure_category": source_state.last_failure_category,
                     },
                 )
             messages.extend(inverter_messages)

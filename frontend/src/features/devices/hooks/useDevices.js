@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getDevices } from "../services/device.service";
-import { subscribeEnergyEvents } from "../../../services/realtime/energySocket";
+import { subscribeWithCoalescedRefresh } from "../../../services/realtime/energySocket";
 
 export default function useDevices() {
   const [devices, setDevices] = useState([]);
@@ -14,8 +14,9 @@ export default function useDevices() {
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => subscribeEnergyEvents((message) => {
-    if (message.type === "device.online" || message.type === "device.offline") refresh();
-  }), [refresh]);
+  useEffect(() => subscribeWithCoalescedRefresh(
+    (message) => message.type === "device.online" || message.type === "device.offline",
+    refresh,
+  ), [refresh]);
   return { devices, error, loading, refresh };
 }

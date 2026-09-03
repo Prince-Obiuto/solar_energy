@@ -1,18 +1,17 @@
 """Strictly read-only normalized inverter API routes."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
+from apps.db.session import get_db
+from apps.jobs.energy_collector import get_energy_collector
 from apps.models import (
     BatteryTelemetryStatus,
     GridTelemetryStatus,
     InverterTelemetry,
     SolarTelemetryStatus,
 )
-from apps.services.inverter_service import (
-    InverterService,
-    ServiceUnavailableError,
-    get_inverter_service,
-)
+from apps.services.dashboard_service import DashboardService
 
 router = APIRouter()
 
@@ -26,39 +25,34 @@ def unavailable() -> HTTPException:
 
 @router.get("", response_model=InverterTelemetry)
 async def current_inverter(
-    service: InverterService = Depends(get_inverter_service),
+    session: Session = Depends(get_db),
 ) -> InverterTelemetry:
-    try:
-        return service.get_current_state()
-    except ServiceUnavailableError:
-        raise unavailable() from None
+    snapshot = await DashboardService(session, get_energy_collector()).get_dashboard()
+    timestamp = snapshot.data_status.source_timestamp
+    if timestamp is None:
+        raise unavailable()
+    return InverterTelemetry(
+        timestamp=timestamp, inverter=snapshot.inverter, battery=snapshot.battery,
+        solar=snapshot.solar, grid=snapshot.grid,
+    )
 
 
 @router.get("/battery", response_model=BatteryTelemetryStatus)
 async def current_battery(
-    service: InverterService = Depends(get_inverter_service),
+    session: Session = Depends(get_db),
 ) -> BatteryTelemetryStatus:
-    try:
-        return service.get_battery_state()
-    except ServiceUnavailableError:
-        raise unavailable() from None
+    return (await current_inverter(session)).battery
 
 
 @router.get("/solar", response_model=SolarTelemetryStatus)
 async def current_solar(
-    service: InverterService = Depends(get_inverter_service),
+    session: Session = Depends(get_db),
 ) -> SolarTelemetryStatus:
-    try:
-        return service.get_solar_state()
-    except ServiceUnavailableError:
-        raise unavailable() from None
+    return (await current_inverter(session)).solar
 
 
 @router.get("/grid", response_model=GridTelemetryStatus)
 async def current_grid(
-    service: InverterService = Depends(get_inverter_service),
+    session: Session = Depends(get_db),
 ) -> GridTelemetryStatus:
-    try:
-        return service.get_grid_state()
-    except ServiceUnavailableError:
-        raise unavailable() from None
+    return (await current_inverter(session)).grid

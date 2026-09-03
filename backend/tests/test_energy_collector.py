@@ -301,7 +301,8 @@ async def test_beve_authentication_failure_retains_last_known_data_and_recovers(
     failed = await collector.get_snapshot()
     assert failed.inverter == original
     assert failed.devices["inverter-test"].source_status is SourceStatus.AUTHENTICATION_FAILED
-    assert failed.devices["inverter-test"].data_freshness is DataFreshness.STALE
+    # Cloud connectivity failed, while the retained source sample is still fresh.
+    assert failed.devices["inverter-test"].data_freshness is DataFreshness.LIVE
     assert failed.devices["inverter-test"].online is None
 
     clock.advance(5)
@@ -312,7 +313,7 @@ async def test_beve_authentication_failure_retains_last_known_data_and_recovers(
 
 
 @pytest.mark.asyncio
-async def test_stale_detection_uses_last_successful_read() -> None:
+async def test_poll_staleness_does_not_mislabel_source_data_or_physical_inverter() -> None:
     clock = MutableClock()
     collector = build_collector(clock, FakeBeveClient(VERIFIED_BEVE_RESPONSE), [])
 
@@ -321,8 +322,9 @@ async def test_stale_detection_uses_last_successful_read() -> None:
     snapshot = await collector.get_snapshot()
 
     assert snapshot.devices["inverter-test"].online is None
-    assert snapshot.devices["inverter-test"].stale is True
-    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.STALE
+    assert snapshot.devices["inverter-test"].source_status is SourceStatus.UNKNOWN
+    assert snapshot.devices["inverter-test"].stale is False
+    assert snapshot.devices["inverter-test"].data_freshness is DataFreshness.LIVE
 
 
 @pytest.mark.asyncio
@@ -343,7 +345,7 @@ async def test_persistence_is_throttled_independently_from_live_reads() -> None:
     clock.advance(50)
     await collector.collect_inverter_once()
 
-    assert len(persistence.inverters) == 2
+    assert len(persistence.inverters) == 1
 
 
 @pytest.mark.asyncio

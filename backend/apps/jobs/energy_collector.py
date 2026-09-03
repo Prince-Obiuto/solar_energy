@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -38,6 +39,8 @@ class CollectorConfig(DomainModel):
     """Polling, persistence, retry, and freshness controls."""
 
     beve_poll_interval_seconds: float = Field(gt=0)
+    beve_poll_stale_after_seconds: float = Field(default=90, gt=0)
+    beve_source_stale_after_seconds: float = Field(default=900, gt=0)
     tuya_poll_interval_seconds: float = Field(gt=0)
     telemetry_persist_interval_seconds: float = Field(gt=0)
     device_stale_after_seconds: float = Field(gt=0)
@@ -48,6 +51,8 @@ class CollectorConfig(DomainModel):
     def from_application_settings(cls) -> CollectorConfig:
         return cls(
             beve_poll_interval_seconds=settings.beve_poll_interval_seconds,
+            beve_poll_stale_after_seconds=settings.beve_poll_stale_after_seconds,
+            beve_source_stale_after_seconds=settings.beve_source_stale_after_seconds,
             tuya_poll_interval_seconds=settings.tuya_poll_interval_seconds,
             telemetry_persist_interval_seconds=settings.telemetry_persist_interval_seconds,
             device_stale_after_seconds=settings.device_stale_after_seconds,
@@ -64,12 +69,18 @@ class DeviceCollectionState(DomainModel):
     stale: bool = True
     last_seen: datetime | None = None
     last_attempt: datetime | None = None
+    last_attempt_at: datetime | None = None
     consecutive_failures: int = 0
     connectivity_type: ConnectivityType | None = None
     data_source: DataSource | None = None
     source_status: SourceStatus = SourceStatus.UNKNOWN
     data_freshness: DataFreshness = DataFreshness.UNAVAILABLE
     last_successful_update: datetime | None = None
+    last_successful_poll_at: datetime | None = None
+    source_timestamp: datetime | None = None
+    source_changed: bool | None = None
+    source_age_seconds: float | None = Field(default=None, ge=0)
+    last_failure_category: str | None = None
 
 
 class CollectorSnapshot(DomainModel):
@@ -201,6 +212,7 @@ class EnergyCollector:
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         load_shedding_service: LoadSheddingService | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._inverter_service = inverter_service
         self._breaker_service = breaker_service
@@ -215,6 +227,7 @@ class EnergyCollector:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep
         self._load_shedding_service = load_shedding_service
+        self._monotonic = monotonic
         self._snapshot = CollectorSnapshot()
         self._state_lock = asyncio.Lock()
         self._source_locks: dict[str, asyncio.Lock] = {}
@@ -223,6 +236,7 @@ class EnergyCollector:
         self._tasks: set[asyncio.Task[None]] = set()
         self._running = False
         self._last_load_management_status: dict[str, Any] | None = None
+        self._last_persisted_inverter_source_timestamp: datetime | None = None
 
     @property
     def running(self) -> bool:
@@ -272,6 +286,7 @@ class EnergyCollector:
         source_id = self._inverter_device_reference
         async with self._source_lock(source_id):
             now = self._clock()
+            started = self._monotonic()
             try:
                 telemetry = await self._with_retry(self._inverter_service.get_current_state)
             except Exception as exc:
@@ -290,22 +305,40 @@ class EnergyCollector:
                         "source_status": source_status.value,
                     }},
                 )
+                logger.warning("BEVE telemetry poll failed category=%s", source_status.value)
                 return False
+            completed_at = self._clock()
+            logger.debug("BEVE telemetry poll completed duration_seconds=%.3f", self._monotonic() - started)
             async with self._state_lock:
                 self._snapshot.inverter = telemetry
-                self._record_inverter_success_locked(source_id, telemetry.timestamp)
-            await self._persist_if_due(
-                source_id, lambda: self._persistence.persist_inverter(source_id, telemetry)
-                if self._persistence else None,
-            )
+                self._record_inverter_success_locked(source_id, telemetry.timestamp, completed_at)
+                inverter_source_state = self._snapshot.devices[source_id].model_copy(deep=True)
+                breaker_cache = self._snapshot.breakers.copy()
+                stale_breakers = {
+                    device_id for device_id, state in self._snapshot.devices.items()
+                    if state.connectivity_type is ConnectivityType.LOCAL and state.stale
+                }
+            if telemetry.timestamp != self._last_persisted_inverter_source_timestamp:
+                persisted = await self._persist_if_due(
+                    source_id, lambda: self._persistence.persist_inverter(source_id, telemetry)
+                    if self._persistence else None,
+                )
+                if persisted:
+                    self._last_persisted_inverter_source_timestamp = telemetry.timestamp
             await self._publish(
                 "inverter.telemetry",
-                {**telemetry.model_dump(mode="json"), "device_id": source_id},
+                {**telemetry.model_dump(mode="json"), "device_id": source_id,
+                 "data_status": inverter_source_state.model_dump(mode="json")},
             )
             if self._load_shedding_service is not None:
                 try:
                     events = await self._run_sync(
-                        self._load_shedding_service.evaluate, telemetry.battery.soc
+                        self._load_shedding_service.evaluate,
+                        telemetry.battery.soc,
+                        telemetry.timestamp,
+                        completed_at,
+                        breaker_cache,
+                        stale_breakers,
                     )
                     for event_type, payload in events:
                         await self._publish(event_type, payload)
@@ -375,10 +408,15 @@ class EnergyCollector:
         interval: float,
         collect: Callable[[], Awaitable[bool]],
     ) -> None:
+        next_run = self._monotonic()
         try:
             while self._running:
                 await collect()
-                await self._sleep(interval)
+                next_run += interval
+                now = self._monotonic()
+                if next_run < now:
+                    next_run = now
+                await self._sleep(max(0.0, next_run - now))
         except asyncio.CancelledError:
             raise
 
@@ -400,6 +438,7 @@ class EnergyCollector:
             state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
             state.online = False
             state.last_attempt = attempted_at
+            state.last_attempt_at = attempted_at
             state.consecutive_failures += 1
             state.stale = True
             state.connectivity_type = ConnectivityType.LOCAL
@@ -416,12 +455,14 @@ class EnergyCollector:
             state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
             state.online = None
             state.last_attempt = attempted_at
+            state.last_attempt_at = attempted_at
             state.consecutive_failures += 1
             state.connectivity_type = ConnectivityType.CLOUD
             state.data_source = DataSource.BEVE_CLOUD
             state.source_status = source_status
+            state.last_failure_category = source_status.value
             state.stale = state.last_successful_update is not None
-            state.data_freshness = DataFreshness.STALE if state.last_successful_update else DataFreshness.UNAVAILABLE
+            self._refresh_inverter_freshness_locked(state, attempted_at)
             self._snapshot.devices[source_id] = state
 
     def _record_success_locked(self, source_id: str, seen_at: datetime) -> None:
@@ -430,34 +471,70 @@ class EnergyCollector:
         state.stale = False
         state.last_seen = seen_at
         state.last_attempt = self._clock()
+        state.last_attempt_at = state.last_attempt
         state.consecutive_failures = 0
         state.connectivity_type = ConnectivityType.LOCAL
         state.data_source = DataSource.TINYTUYA
         state.source_status = SourceStatus.CONNECTED
         state.data_freshness = DataFreshness.LIVE
         state.last_successful_update = seen_at
+        state.last_successful_poll_at = seen_at
         self._snapshot.devices[source_id] = state
 
-    def _record_inverter_success_locked(self, source_id: str, seen_at: datetime) -> None:
+    def _record_inverter_success_locked(
+        self, source_id: str, source_timestamp: datetime, polled_at: datetime
+    ) -> None:
         state = self._snapshot.devices.get(source_id) or DeviceCollectionState(device_id=source_id)
+        previous_source_timestamp = state.source_timestamp
         state.online = None
-        state.stale = False
-        state.last_seen = seen_at
-        state.last_successful_update = seen_at
-        state.last_attempt = self._clock()
+        state.last_seen = polled_at
+        state.last_successful_update = polled_at
+        state.last_successful_poll_at = polled_at
+        state.last_attempt = polled_at
+        state.last_attempt_at = polled_at
+        state.source_timestamp = source_timestamp
+        state.source_changed = previous_source_timestamp is None or source_timestamp > previous_source_timestamp
         state.consecutive_failures = 0
         state.connectivity_type = ConnectivityType.CLOUD
         state.data_source = DataSource.BEVE_CLOUD
         state.source_status = SourceStatus.CONNECTED
-        state.data_freshness = DataFreshness.LIVE
+        state.last_failure_category = None
+        self._refresh_inverter_freshness_locked(state, polled_at)
         self._snapshot.devices[source_id] = state
+        if state.source_changed:
+            logger.info("BEVE source telemetry timestamp advanced")
 
     def _refresh_stale_locked(self, now: datetime) -> None:
         for state in self._snapshot.devices.values():
-            timed_out = self._is_stale(state.last_successful_update or state.last_seen, now)
-            state.stale = state.stale or timed_out
-            if state.stale and state.data_freshness is DataFreshness.LIVE:
-                state.data_freshness = DataFreshness.STALE
+            if state.connectivity_type is ConnectivityType.CLOUD:
+                self._refresh_inverter_freshness_locked(state, now)
+            else:
+                timed_out = self._is_stale(state.last_successful_update or state.last_seen, now)
+                state.stale = state.stale or timed_out
+                if state.stale and state.data_freshness is DataFreshness.LIVE:
+                    state.data_freshness = DataFreshness.STALE
+
+    def _refresh_inverter_freshness_locked(
+        self, state: DeviceCollectionState, now: datetime
+    ) -> None:
+        poll_stale = self._older_than(
+            state.last_successful_poll_at, now, self.config.beve_poll_stale_after_seconds
+        )
+        if state.source_timestamp is None:
+            state.source_age_seconds = None
+            state.data_freshness = DataFreshness.UNAVAILABLE
+            state.stale = True
+            return
+        state.source_age_seconds = max(0.0, (now - state.source_timestamp).total_seconds())
+        source_stale = state.source_age_seconds >= self.config.beve_source_stale_after_seconds
+        state.stale = source_stale
+        state.data_freshness = DataFreshness.STALE if source_stale else DataFreshness.LIVE
+        if poll_stale and state.source_status is SourceStatus.CONNECTED:
+            state.source_status = SourceStatus.UNKNOWN
+
+    @staticmethod
+    def _older_than(value: datetime | None, now: datetime, seconds: float) -> bool:
+        return value is None or (now - value).total_seconds() >= seconds
 
     def _is_stale(self, last_seen: datetime | None, now: datetime) -> bool:
         if last_seen is None:
@@ -479,16 +556,16 @@ class EnergyCollector:
         persist: Callable[[], None],
         *,
         online: bool | None = None,
-    ) -> None:
+    ) -> bool:
         if self._persistence is None:
-            return
+            return False
         now = self._clock()
         previous = self._last_persisted.get(source_id)
         state_changed = online is not None and self._last_persisted_online.get(source_id) != online
         if not state_changed and previous is not None and (
             now - previous
         ).total_seconds() < self.config.telemetry_persist_interval_seconds:
-            return
+            return False
         try:
             await self._run_sync(persist)
         except Exception:
@@ -497,10 +574,11 @@ class EnergyCollector:
                 "system.database_failure",
                 {"device_id": source_id, "timestamp": now, "failure_type": "persistence"},
             )
-            return
+            return False
         self._last_persisted[source_id] = now
         if online is not None:
             self._last_persisted_online[source_id] = online
+        return True
 
     async def _publish(self, event_type: str, payload: dict[str, Any]) -> None:
         try:

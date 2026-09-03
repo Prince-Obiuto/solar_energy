@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import Alert from "../../../components/ui/Alert";
 import Card from "../../../components/ui/Card";
 import StatusChip from "../../../components/ui/StatusChip";
-import { subscribeEnergyEvents } from "../../../services/realtime/energySocket";
+import { subscribeWithCoalescedRefresh } from "../../../services/realtime/energySocket";
 import { formatPercentage, formatRelativeTime } from "../../../utils/formatters";
 import { getLoadManagementStatus } from "../services/loadManagement.service";
 
@@ -43,9 +43,9 @@ export default function SmartLoadManagement() {
       .catch((caught) => { if (active) setError(caught); });
     return () => { active = false; };
   }, []);
-  useEffect(() => subscribeEnergyEvents((message) => {
-    if (message.type.startsWith("load_management.")) refresh();
-  }), [refresh]);
+  useEffect(() => subscribeWithCoalescedRefresh(
+    (message) => message.type.startsWith("load_management."), refresh,
+  ), [refresh]);
 
   return (
     <Card className="space-y-4">
@@ -55,7 +55,7 @@ export default function SmartLoadManagement() {
       </div>
       {error && <Alert tone="warning">Load-management status is currently unavailable.</Alert>}
       {state && <>
-        <p className="text-sm text-gray-600">Live battery SOC: <span className="font-semibold text-gray-900">{formatPercentage(state.current_soc)}</span></p>
+        <p className="text-sm text-gray-600">{state.current_stage === "unavailable" ? "Last known battery SOC" : "Current battery SOC"}: <span className="font-semibold text-gray-900">{formatPercentage(state.current_soc)}</span></p>
         {state.current_stage === "unavailable" && <Alert tone="warning">Automation is paused until a successful current BEVE reading supplies a valid battery SOC.</Alert>}
         <div className="grid gap-3 sm:grid-cols-2">
           {state.policies.map((policy) => <div className="rounded-lg border border-gray-100 p-4" key={policy.policy_name}>

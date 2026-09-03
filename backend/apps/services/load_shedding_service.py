@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from apps.core.config import Settings
 from apps.db.session import session_scope
-from apps.models import CommandStatus
+from apps.models import BreakerDevice, CommandStatus
 from apps.models.persistence import DeviceRecord, LoadSheddingStateRecord
 from apps.schemas.load_management import (
     LoadManagementStage, LoadManagementStatus, LoadPolicyStatus, PendingTransition,
@@ -49,6 +49,7 @@ class LoadSheddingService:
     ) -> None:
         self.enabled = config.load_shedding_enabled
         self.confirmation_required = config.load_shedding_confirm_readings
+        self.source_stale_after_seconds = config.beve_source_stale_after_seconds
         self.breakers = breaker_service
         self.session_factory = session_factory
         self.clock = clock or (lambda: datetime.now(UTC))
@@ -60,27 +61,48 @@ class LoadSheddingService:
         self._streaks: dict[str, tuple[PendingTransition | None, int]] = {}
         self._current_soc: float | None = None
         self._available = False
+        self._last_source_timestamp: datetime | None = None
         self._breaker_states: dict[str, tuple[bool, bool | None]] = {}
         self._lock = threading.RLock()
 
-    def evaluate(self, soc: float | int | None) -> list[tuple[str, dict[str, Any]]]:
-        """Evaluate one successful, current BEVE sample and return events to publish."""
+    def evaluate(
+        self,
+        soc: float | int | None,
+        source_timestamp: datetime,
+        polled_at: datetime,
+        breaker_states: dict[str, BreakerDevice],
+        stale_breakers: set[str] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Evaluate one distinct, acceptably fresh BEVE source sample."""
 
         with self._lock:
             if not self.enabled:
                 return []
-            if not self._valid_soc(soc):
+            if (
+                not self._valid_soc(soc)
+                or source_timestamp.tzinfo is None
+                or polled_at.tzinfo is None
+                or source_timestamp > polled_at
+                or (polled_at - source_timestamp).total_seconds() > self.source_stale_after_seconds
+            ):
                 self.mark_unavailable()
-                logger.info("Load shedding skipped because current SOC is unavailable")
+                logger.info("Load shedding skipped because current source data is unavailable or delayed")
+                return []
+            self._available = True
+            if self._last_source_timestamp is not None and source_timestamp <= self._last_source_timestamp:
                 return []
             self._current_soc = float(soc)
-            self._available = True
+            self._last_source_timestamp = source_timestamp
             events: list[tuple[str, dict[str, Any]]] = []
+            stale_breakers = stale_breakers or set()
             for policy in self.policies:
                 if not policy.breaker_id:
                     continue
                 try:
-                    event = self._evaluate_policy(policy, float(soc))
+                    event = self._evaluate_policy(
+                        policy, float(soc), breaker_states.get(policy.breaker_id),
+                        policy.breaker_id in stale_breakers,
+                    )
                     if event:
                         events.append(event)
                 except Exception:
@@ -92,7 +114,6 @@ class LoadSheddingService:
     def mark_unavailable(self) -> None:
         with self._lock:
             self._available = False
-            self._current_soc = None
             self._streaks.clear()
 
     def get_status(self) -> LoadManagementStatus:
@@ -116,12 +137,15 @@ class LoadSheddingService:
                 policies=statuses,
             )
 
-    def _evaluate_policy(self, policy: LoadSheddingPolicy, soc: float):
+    def _evaluate_policy(
+        self, policy: LoadSheddingPolicy, soc: float,
+        breaker: BreakerDevice | None, stale: bool,
+    ):
         with session_scope(self.session_factory) as session:
-            state, device = self._state(session, policy)
-            breaker = self.breakers.get_breaker(policy.breaker_id or "")
-            self._breaker_states[policy.name] = (breaker.online, breaker.status.switch_on)
-            if not breaker.online or breaker.status.switch_on is None:
+            state, _ = self._state(session, policy)
+            if breaker is not None:
+                self._breaker_states[policy.name] = (breaker.online, breaker.status.switch_on)
+            if breaker is None or stale or not breaker.online or breaker.status.switch_on is None:
                 state.last_error = "Breaker is unavailable"
                 self._streaks[policy.name] = (None, 0)
                 return None
@@ -152,6 +176,7 @@ class LoadSheddingService:
             verified = result.status is CommandStatus.SUCCEEDED and result.data.get("verified_value") is desired
             if verified:
                 self._record_success(state, transition)
+                self._breaker_states[policy.name] = (True, desired)
                 self._streaks[policy.name] = (None, 0)
                 logger.info("Load management transition verified for policy %s", policy.name)
                 return ("load_management.shed" if transition is PendingTransition.SHED else "load_management.restored", self._event(policy, soc, transition, True))

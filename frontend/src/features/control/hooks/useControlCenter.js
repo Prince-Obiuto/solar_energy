@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getControllableBreakers } from "../services/control.service";
-import { subscribeEnergyEvents } from "../../../services/realtime/energySocket";
+import { subscribeWithCoalescedRefresh } from "../../../services/realtime/energySocket";
 
 export default function useControlCenter() {
   const [breakers, setBreakers] = useState([]);
@@ -21,9 +21,10 @@ export default function useControlCenter() {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => subscribeEnergyEvents((message) => {
-    if (message.type.startsWith("breaker.") || message.type.startsWith("device.")) refresh();
-  }), [refresh]);
+  useEffect(() => subscribeWithCoalescedRefresh(
+    (message) => message.type.startsWith("breaker.") || message.type.startsWith("device."),
+    refresh,
+  ), [refresh]);
 
   return { breakers, error, loading, refresh };
 }

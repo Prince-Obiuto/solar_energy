@@ -58,6 +58,33 @@ export function subscribeEnergyEvents(listener) {
   return () => listeners.delete(listener);
 }
 
+export function subscribeWithCoalescedRefresh(predicate, refresh, delayMs = 150) {
+  let timer = null;
+  let inFlight = false;
+  let queued = false;
+  let disposed = false;
+  const run = async () => {
+    if (disposed) return;
+    if (inFlight) { queued = true; return; }
+    inFlight = true;
+    try { await refresh(); }
+    finally {
+      inFlight = false;
+      if (queued && !disposed) { queued = false; timer = window.setTimeout(run, delayMs); }
+    }
+  };
+  const unsubscribe = subscribeEnergyEvents((message) => {
+    if (!predicate(message)) return;
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(run, delayMs);
+  });
+  return () => {
+    disposed = true;
+    if (timer) window.clearTimeout(timer);
+    unsubscribe();
+  };
+}
+
 export function subscribeConnectionStatus(listener) {
   statusListeners.add(listener);
   return () => statusListeners.delete(listener);

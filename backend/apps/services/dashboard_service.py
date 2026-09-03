@@ -104,6 +104,12 @@ class DashboardService:
                 source_status=state.source_status,
                 data_freshness=state.data_freshness,
                 last_successful_update=state.last_successful_update,
+                last_attempt_at=state.last_attempt_at,
+                last_successful_poll_at=state.last_successful_poll_at,
+                source_timestamp=state.source_timestamp,
+                source_changed=state.source_changed,
+                source_age_seconds=state.source_age_seconds,
+                last_failure_category=state.last_failure_category,
             )
         latest = self.session.scalar(select(func.max(InverterReadingRecord.timestamp)))
         return DataStatus(
@@ -114,6 +120,8 @@ class DashboardService:
             source_status=SourceStatus.UNKNOWN,
             data_freshness=DataFreshness.STALE if latest is not None else DataFreshness.UNAVAILABLE,
             last_successful_update=latest,
+            source_timestamp=latest,
+            source_age_seconds=max(0.0, (self.clock() - latest).total_seconds()) if latest else None,
         )
 
     def _areas(self, cache: CollectorSnapshot) -> list[DashboardArea]:
@@ -202,13 +210,19 @@ class DashboardService:
             )
         inverter_cloud_health = (
             ComponentHealth.HEALTHY
-            if data_status.available and not data_status.stale
+            if data_status.source_status is SourceStatus.CONNECTED
             else ComponentHealth.DEGRADED
-            if data_status.last_successful_update is not None
+            if data_status.last_successful_poll_at is not None
+            else ComponentHealth.UNAVAILABLE
+        )
+        inverter_data_health = (
+            ComponentHealth.HEALTHY if data_status.data_freshness is DataFreshness.LIVE
+            else ComponentHealth.DEGRADED if data_status.source_timestamp is not None
             else ComponentHealth.UNAVAILABLE
         )
         components = {
             "inverter_cloud": inverter_cloud_health,
+            "inverter_data": inverter_data_health,
             "breakers": breakers_health,
             "database": ComponentHealth.HEALTHY,
             "realtime": ComponentHealth.HEALTHY,
@@ -216,7 +230,10 @@ class DashboardService:
         health = OverallHealth.UNKNOWN
         known_components = [value for value in components.values() if value is not ComponentHealth.UNKNOWN]
         if known_components:
-            if all(value is ComponentHealth.UNAVAILABLE for value in known_components[:2]):
+            if (
+                components["inverter_cloud"] is ComponentHealth.UNAVAILABLE
+                and components["breakers"] is ComponentHealth.UNAVAILABLE
+            ):
                 health = OverallHealth.CRITICAL
             elif any(value is not ComponentHealth.HEALTHY for value in known_components) or active_alerts:
                 health = OverallHealth.DEGRADED

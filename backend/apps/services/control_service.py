@@ -111,19 +111,20 @@ class BreakerControlService:
                 return self._result(event)
 
             try:
-                previous = self.adapter.read_control_value(registration.client, datapoint)
-                event.previous_value = previous
-                self._write(registration.client, action, requested_value)
-                event.hardware_acknowledgement = True
-                if self.verify_delay_seconds:
-                    self.sleep(self.verify_delay_seconds)
-                verified = self.adapter.read_control_value(registration.client, datapoint)
-                event.verified_value = verified
-                if type(verified) is not type(requested_value) or verified != requested_value:
-                    event.status = CommandStatus.FAILED.value
-                    event.error_information = "Hardware read-back did not match the requested value"
-                else:
-                    event.status = CommandStatus.SUCCEEDED.value
+                with self.breakers.hardware_access(breaker_id):
+                    previous = self.adapter.read_control_value(registration.client, datapoint)
+                    event.previous_value = previous
+                    self._write(registration.client, action, requested_value)
+                    event.hardware_acknowledgement = True
+                    if self.verify_delay_seconds:
+                        self.sleep(self.verify_delay_seconds)
+                    verified = self.adapter.read_control_value(registration.client, datapoint)
+                    event.verified_value = verified
+                    if type(verified) is not type(requested_value) or verified != requested_value:
+                        event.status = CommandStatus.FAILED.value
+                        event.error_information = "Hardware read-back did not match the requested value"
+                    else:
+                        event.status = CommandStatus.SUCCEEDED.value
             except TuyaTimeoutError:
                 event.status = CommandStatus.TIMED_OUT.value
                 event.error_information = "Breaker communication timed out"

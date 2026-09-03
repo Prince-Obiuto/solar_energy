@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     initial_admin_password: SecretStr | None = None
     initial_admin_full_name: str = "System Administrator"
     beve_poll_interval_seconds: float = Field(default=30, gt=0)
+    beve_poll_stale_after_seconds: float = Field(default=90, gt=0)
+    beve_source_stale_after_seconds: float = Field(default=900, gt=0)
     tuya_poll_interval_seconds: float = Field(default=10, gt=0)
     tuya_device_file: Path = Path("devices.json")
     tuya_socket_timeout_seconds: float = Field(default=5, gt=0, le=60)

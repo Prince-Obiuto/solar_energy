@@ -162,6 +162,15 @@ it normalizes inverter, battery, solar, and grid categories, preserves legitimat
 hardware zero values, and maps only absent values to null. Credentials and
 session details are never serialized or logged.
 
+BEVE cloud connectivity and inverter source-data freshness are deliberately
+separate. `last_successful_poll_at` is the backend time when a structurally
+valid cloud response completed; `source_timestamp` is the unchanged vendor time
+inside that response. Repeated Siseli samples therefore keep the cloud
+`connected` while their source age increases. `BEVE_POLL_STALE_AFTER_SECONDS`
+controls connectivity staleness and `BEVE_SOURCE_STALE_AFTER_SECONDS` controls
+source-data safety (default 900 seconds). A delayed source sample remains
+visible but cannot advance automatic load-management confirmation.
+
 ## 10. Tuya breaker configuration
 
 The verified device is WIFl Smart Meter Pro / TMPH, category `znjdq`, protocol
@@ -198,6 +207,14 @@ FastAPI lifespan composes the environment-backed read-only BEVE client, every
 configured TinyTuya breaker, normalized services, persistence adapter, event
 publisher and collector. Development can start without hardware configuration;
 partially supplied BEVE settings fail with a sanitized configuration error.
+
+The collector uses monotonic start-to-start scheduling, bounded retries, and a
+per-source async lock. Breaker socket access also has a shared per-device lock:
+collector polling and a command's complete read/write/read-back sequence cannot
+overlap for the same breaker, while different breakers remain independent.
+Monitoring routes consume collector state first and persisted state second;
+they never initiate TinyTuya traffic. WebSocket-triggered frontend refreshes are
+debounced/coalesced so bursts result in at most one request in flight.
 
 ## 12. REST endpoint inventory
 
@@ -268,6 +285,12 @@ stale last-known data, or an independent polling loop, and it never writes to
 the inverter. After two consecutive qualifying readings (configurable), it
 uses the same audited TinyTuya DP1 command and read-back verification path as
 manual control.
+
+Confirmation counts distinct, increasing `source_timestamp` values—not HTTP
+polls. Five successful polls returning the same Siseli sample count once, and a
+timestamp moving backwards does not count. A source sample older than
+`BEVE_SOURCE_STALE_AFTER_SECONDS` pauses automation without changing either
+relay; the last known SOC remains available for monitoring.
 
 | Policy | Shed | Restore |
 | --- | ---: | ---: |

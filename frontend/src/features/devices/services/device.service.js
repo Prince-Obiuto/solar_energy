@@ -9,7 +9,7 @@ export async function getDevices() {
     type: device.type,
     icon: device.type === "breaker" ? "breakers" : device.type,
     status: device.connectivity_type === "cloud"
-      ? !device.data_status?.available ? "Cloud unavailable" : device.data_status?.stale ? "Stale" : "Live"
+      ? !device.data_status?.available ? "Cloud unavailable" : device.data_status?.stale ? "Source delayed" : "Live"
       : !device.online ? "Offline" : device.last_seen && Date.now() - new Date(device.last_seen).getTime() > TELEMETRY_STALE_AFTER_MS ? "Stale" : "Live",
     online: device.online,
     area: device.area,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from datetime import UTC, datetime, timedelta
 from pydantic import SecretStr
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -30,8 +31,10 @@ class RelayClient:
         self.relay_on = relay_on
         self.mismatch = mismatch
         self.writes: list[tuple[int, object]] = []
+        self.reads = 0
 
     def read_status(self):
+        self.reads += 1
         return {"dps": {"1": self.relay_on, "9": 0, "17": 0, "18": 0, "19": 0,
                          "20": 2300, "38": "memory", "40": "relay", "41": False}}
 
@@ -70,67 +73,79 @@ def build_system(*, enabled=True, lecturer_on=True, admin_on=True, mismatch=Fals
     return LoadSheddingService(config, breakers, factory, control_factory=control_factory), factory, lecturer, admin
 
 
+def evaluate(service, soc, *, source_timestamp=None, polled_at=None):
+    sequence = getattr(service, "_test_sequence", 0) + 1
+    service._test_sequence = sequence
+    source_timestamp = source_timestamp or datetime(2026, 9, 1, tzinfo=UTC) + timedelta(minutes=sequence)
+    polled_at = polled_at or source_timestamp
+    cache = {
+        breaker_id: service.breakers.get_breaker(breaker_id)
+        for breaker_id in service.breakers.registered_breaker_ids
+    }
+    return service.evaluate(soc, source_timestamp, polled_at, cache)
+
+
 def test_normal_soc_does_nothing_and_zero_is_valid() -> None:
     service, _, lecturer, admin = build_system()
-    assert service.evaluate(50) == []
-    service.evaluate(0)
-    events = service.evaluate(0)
+    assert evaluate(service, 50) == []
+    evaluate(service, 0)
+    events = evaluate(service, 0)
     assert lecturer.writes == [(1, False)] and admin.writes == [(1, False)]
     assert {event[0] for event in events} == {"load_management.shed"}
 
 
 def test_two_readings_shed_lecturer_without_spam() -> None:
     service, _, lecturer, admin = build_system()
-    assert service.evaluate(20) == []
-    events = service.evaluate(19)
+    assert evaluate(service, 20) == []
+    events = evaluate(service, 19)
     assert lecturer.writes == [(1, False)] and admin.writes == []
     assert events[0][0] == "load_management.shed"
-    service.evaluate(18)
-    service.evaluate(18)
+    evaluate(service, 18)
+    evaluate(service, 18)
     assert lecturer.writes == [(1, False)]
 
 
 def test_admin_boundaries_and_hysteresis() -> None:
     service, _, _, admin = build_system()
-    service.evaluate(16)
-    service.evaluate(16)
+    evaluate(service, 16)
+    evaluate(service, 16)
     assert admin.writes == []
-    service.evaluate(15)
-    service.evaluate(14)
+    evaluate(service, 15)
+    evaluate(service, 14)
     assert admin.writes == [(1, False)]
-    service.evaluate(16)
-    service.evaluate(16)
+    evaluate(service, 16)
+    evaluate(service, 16)
     assert admin.relay_on is False
-    service.evaluate(17)
-    service.evaluate(18)
+    evaluate(service, 17)
+    evaluate(service, 18)
     assert admin.writes == [(1, False), (1, True)]
 
 
 def test_lecturer_restore_requires_confirmed_22_and_preserves_21() -> None:
     service, _, lecturer, _ = build_system()
-    service.evaluate(20); service.evaluate(19)
-    service.evaluate(21); service.evaluate(21)
+    evaluate(service, 20); evaluate(service, 19)
+    evaluate(service, 21); evaluate(service, 21)
     assert lecturer.relay_on is False
-    service.evaluate(22)
+    evaluate(service, 22)
     assert lecturer.relay_on is False
-    service.evaluate(23)
+    evaluate(service, 23)
     assert lecturer.relay_on is True
 
 
 def test_missing_soc_invalidates_confirmation() -> None:
     service, _, lecturer, _ = build_system()
-    service.evaluate(20)
+    evaluate(service, 20)
     service.mark_unavailable()
-    service.evaluate(19)
+    evaluate(service, 19)
     assert lecturer.writes == []
-    service.evaluate(19)
+    evaluate(service, 19)
     assert lecturer.writes == [(1, False)]
 
 
 def test_manual_off_is_not_owned_or_restored() -> None:
     service, factory, lecturer, _ = build_system(lecturer_on=False)
-    service.evaluate(20); service.evaluate(19)
-    service.evaluate(22); service.evaluate(23)
+    evaluate(service, 20); evaluate(service, 19)
+    evaluate(service, 22); evaluate(service, 23)
     assert lecturer.writes == [] and lecturer.relay_on is False
     with factory() as session:
         state = session.scalar(select(LoadSheddingStateRecord).where(LoadSheddingStateRecord.policy_name == "lecturer_offices"))
@@ -139,12 +154,12 @@ def test_manual_off_is_not_owned_or_restored() -> None:
 
 def test_ownership_survives_service_reconstruction() -> None:
     service, factory, lecturer, admin = build_system()
-    service.evaluate(20); service.evaluate(19)
+    evaluate(service, 20); evaluate(service, 19)
     rebuilt = LoadSheddingService(
         service_config(), service.breakers, factory,
         control_factory=lambda session, breakers: BreakerControlService(session, breakers, verify_delay_seconds=0),
     )
-    rebuilt.evaluate(22); rebuilt.evaluate(23)
+    evaluate(rebuilt, 22); evaluate(rebuilt, 23)
     assert lecturer.writes == [(1, False), (1, True)] and admin.writes == []
 
 
@@ -160,8 +175,8 @@ def service_config(**changes):
 
 def test_readback_mismatch_never_claims_ownership_and_is_audited() -> None:
     service, factory, lecturer, _ = build_system(mismatch=True)
-    service.evaluate(20)
-    events = service.evaluate(19)
+    evaluate(service, 20)
+    events = evaluate(service, 19)
     assert events[0][0] == "load_management.action_failed"
     assert service.get_status().policies[0].automatically_shed is False
     with factory() as session:
@@ -172,30 +187,30 @@ def test_readback_mismatch_never_claims_ownership_and_is_audited() -> None:
 
 def test_disabled_feature_and_missing_breaker_are_safe() -> None:
     service, _, lecturer, admin = build_system(enabled=False)
-    service.evaluate(0); service.evaluate(0)
+    evaluate(service, 0); evaluate(service, 0)
     assert lecturer.writes == admin.writes == []
     assert service.get_status().current_stage.value == "disabled"
     missing = LoadSheddingService(
         service_config(load_shedding_lecturer_breaker_id=None, load_shedding_admin_breaker_id=None),
         service.breakers, service.session_factory,
     )
-    assert missing.evaluate(0) == []
+    assert evaluate(missing, 0) == []
     assert all(not item.enabled for item in missing.get_status().policies)
 
 
 def test_manual_on_during_low_soc_is_shed_again_after_confirmation() -> None:
     service, _, lecturer, _ = build_system()
-    service.evaluate(20); service.evaluate(19)
+    evaluate(service, 20); evaluate(service, 19)
     lecturer.relay_on = True  # authenticated administrator action outside this service
-    service.evaluate(19)
-    service.evaluate(19)
+    evaluate(service, 19)
+    evaluate(service, 19)
     assert lecturer.writes == [(1, False), (1, False)]
 
 
 def test_one_policy_failure_does_not_prevent_other_policy() -> None:
     service, _, lecturer, admin = build_system(mismatch=True)
-    service.evaluate(0)
-    events = service.evaluate(0)
+    evaluate(service, 0)
+    events = evaluate(service, 0)
     assert lecturer.writes == [(1, False)]
     assert admin.writes == [(1, False)]
     assert {event[0] for event in events} == {
@@ -228,7 +243,7 @@ class DecisionSpy:
         self.values = []
         self.unavailable = 0
 
-    def evaluate(self, soc):
+    def evaluate(self, soc, source_timestamp, polled_at, breaker_states, stale_breakers):
         self.values.append(soc)
         return []
 
@@ -259,3 +274,39 @@ async def test_collector_evaluates_only_successful_current_beve_reads() -> None:
     assert spy.values == [100]
     assert await collector.collect_inverter_once() is False
     assert spy.values == [100] and spy.unavailable == 1
+
+
+def test_duplicate_and_backward_source_samples_do_not_advance_confirmation() -> None:
+    service, _, lecturer, _ = build_system()
+    sample_a = datetime(2026, 9, 1, 10, 2, 49, tzinfo=UTC)
+    cache = {device_id: service.breakers.get_breaker(device_id) for device_id in service.breakers.registered_breaker_ids}
+    service.evaluate(19, sample_a, sample_a + timedelta(minutes=1), cache)
+    for minutes in range(2, 7):
+        service.evaluate(19, sample_a, sample_a + timedelta(minutes=minutes), cache)
+    assert service.get_status().policies[0].confirmation_count == 1
+    service.evaluate(18, sample_a - timedelta(minutes=1), sample_a + timedelta(minutes=7), cache)
+    assert service.get_status().policies[0].confirmation_count == 1
+    sample_b = sample_a + timedelta(minutes=8)
+    service.evaluate(18, sample_b, sample_b, cache)
+    assert lecturer.writes == [(1, False)]
+
+
+def test_stale_source_does_not_advance_or_control() -> None:
+    service, _, lecturer, _ = build_system()
+    source = datetime(2026, 9, 1, 10, 0, tzinfo=UTC)
+    cache = {device_id: service.breakers.get_breaker(device_id) for device_id in service.breakers.registered_breaker_ids}
+    service.evaluate(19, source, source + timedelta(seconds=901), cache)
+    assert lecturer.writes == []
+    assert service.get_status().current_stage.value == "unavailable"
+
+
+def test_no_transition_evaluation_uses_cached_breaker_without_hardware_read() -> None:
+    service, _, lecturer, admin = build_system()
+    cache = {
+        breaker_id: service.breakers.get_breaker(breaker_id)
+        for breaker_id in service.breakers.registered_breaker_ids
+    }
+    lecturer.reads = admin.reads = 0
+    source = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    service.evaluate(50, source, source, cache)
+    assert lecturer.reads == admin.reads == 0

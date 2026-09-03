@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getAreas } from "../services/area.service";
-import { subscribeEnergyEvents } from "../../../services/realtime/energySocket";
+import { subscribeWithCoalescedRefresh } from "../../../services/realtime/energySocket";
 
 export default function useAreaMonitoring() {
   const [areas, setAreas] = useState([]);
@@ -25,9 +25,10 @@ export default function useAreaMonitoring() {
   // Initial fetch and subsequent hardware event refreshes are external synchronization.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => subscribeEnergyEvents((message) => {
-    if (message.type.startsWith("breaker.") || message.type.startsWith("device.")) refresh();
-  }), [refresh]);
+  useEffect(() => subscribeWithCoalescedRefresh(
+    (message) => message.type.startsWith("breaker.") || message.type.startsWith("device."),
+    refresh,
+  ), [refresh]);
 
   const filteredAreas = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();

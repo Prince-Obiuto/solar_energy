@@ -12,13 +12,11 @@ from apps.models.persistence import UserRecord
 from apps.schemas.report import Aggregation, HistoryQuery, HistoryResponse, HistorySource
 from apps.services.report_service import HistoryAccessError, HistoryService, enforce_history_access
 
-from apps.services.energy_service import (
-    CurrentEnergySnapshot,
-    EnergyService,
-    get_energy_service,
-    list_energy_points,
-)
-from apps.services.inverter_service import ServiceUnavailableError
+from apps.services.energy_service import CurrentEnergySnapshot, list_energy_points
+from apps.jobs.energy_collector import get_energy_collector
+from apps.services.breaker_monitoring_service import BreakerMonitoringService
+from apps.services.breaker_service import get_breaker_service
+from apps.services.dashboard_service import DashboardService
 
 router = APIRouter()
 
@@ -60,12 +58,20 @@ async def energy_history(
 
 @router.get("/latest", response_model=CurrentEnergySnapshot)
 async def latest_energy(
-    service: EnergyService = Depends(get_energy_service),
+    session: Session = Depends(get_db),
 ) -> CurrentEnergySnapshot:
-    try:
-        return service.get_latest_snapshot()
-    except ServiceUnavailableError:
+    collector = get_energy_collector()
+    dashboard = await DashboardService(session, collector).get_dashboard()
+    if dashboard.data_status.source_timestamp is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Current energy telemetry is unavailable",
-        ) from None
+        )
+    breakers = await BreakerMonitoringService(
+        session, get_breaker_service(), collector
+    ).list_breakers()
+    return CurrentEnergySnapshot(
+        captured_at=dashboard.data_status.last_successful_poll_at or dashboard.data_status.source_timestamp,
+        inverter=dashboard.inverter, battery=dashboard.battery,
+        solar=dashboard.solar, grid=dashboard.grid, breakers=breakers,
+    )

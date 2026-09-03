@@ -32,14 +32,15 @@ export default function EnergyDashboard() {
       {error && <Alert>Live refresh failed. Showing the most recent available snapshot.</Alert>}
       {!data.inverter.dataStatus.available && data.inverter.dataStatus.last_successful_update && <Alert>BEVE cloud unavailable. Showing stale inverter data last updated {formatRelativeTime(data.inverter.dataStatus.last_successful_update)}. Physical inverter reachability is unknown.</Alert>}
       {!data.inverter.dataStatus.available && !data.inverter.dataStatus.last_successful_update && <Alert>Inverter data unavailable because the BEVE cloud source cannot currently provide telemetry.</Alert>}
-      {data.inverter.dataStatus.available && (stale || data.inverter.dataStatus.stale) && <Alert>Inverter data is stale. Last updated {formatRelativeTime(data.inverter.dataStatus.last_successful_update)}.</Alert>}
+      {data.inverter.dataStatus.available && data.inverter.dataStatus.stale && <Alert>BEVE cloud connected — source data delayed. Last cloud poll {formatRelativeTime(data.inverter.dataStatus.last_successful_poll_at)}; source updated {formatRelativeTime(data.inverter.dataStatus.source_timestamp)}.</Alert>}
+      {data.inverter.dataStatus.available && !data.inverter.dataStatus.stale && stale && <Alert>Dashboard refresh is delayed. Last cloud poll {formatRelativeTime(data.inverter.dataStatus.last_successful_poll_at)}.</Alert>}
 
       <section aria-label="Key performance indicators" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard icon={SunIcon} label="PV Power" meta={data.solar.status || "PV status unavailable"} tone="amber" value={formatKilowatts(data.solar.power)} />
         <KpiCard icon={Battery100Icon} label="Battery SOC" meta={data.battery.state || "Battery state unavailable"} tone="violet" value={formatPercentage(data.battery.percentage)} />
         <KpiCard icon={BoltIcon} label="Load Consumption" meta="Area breaker demand" tone="sky" value={formatKilowatts(data.loads.totalPower)} />
         <KpiCard icon={BoltIcon} label="Grid Power" meta={data.grid.connected == null ? "Grid status unavailable" : data.grid.connected ? `${data.grid.voltage} V · ${data.grid.frequency} Hz` : "Grid unavailable"} tone="emerald" value={formatKilowatts(data.grid.power)} />
-        <KpiCard icon={CheckCircleIcon} label="Inverter Status" meta={!data.inverter.dataStatus.available ? `BEVE cloud ${data.inverter.dataStatus.source_status || "unavailable"}` : data.inverter.dataStatus.stale ? `Stale · last updated ${formatRelativeTime(data.inverter.dataStatus.last_successful_update)}` : "Live BEVE cloud data"} tone="teal" value={data.inverter.status || "--"} />
+        <KpiCard icon={CheckCircleIcon} label="Inverter Status" meta={!data.inverter.dataStatus.available ? `BEVE cloud ${data.inverter.dataStatus.source_status || "unavailable"}` : data.inverter.dataStatus.stale ? `Connected · source delayed ${formatRelativeTime(data.inverter.dataStatus.source_timestamp)}` : `Connected · polled ${formatRelativeTime(data.inverter.dataStatus.last_successful_poll_at)}`} tone="teal" value={data.inverter.status || "--"} />
       </section>
 
       <EnergyFlow data={data} />

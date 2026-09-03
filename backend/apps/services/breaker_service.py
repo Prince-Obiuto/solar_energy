@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Callable, Protocol
+import threading
 
 from apps.integrations.tuya.adapter import TuyaBreakerAdapter
 from apps.integrations.tuya.client import (
@@ -52,6 +54,9 @@ class BreakerService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._last_seen: dict[str, datetime] = {}
         self._last_error_category: dict[str, str] = {}
+        self._hardware_locks = {
+            device_id: threading.RLock() for device_id in self._registrations
+        }
 
     @property
     def registered_breaker_ids(self) -> tuple[str, ...]:
@@ -64,26 +69,27 @@ class BreakerService:
 
     def get_breaker(self, breaker_id: str) -> BreakerDevice:
         registration = self._registration(breaker_id)
-        try:
-            status = self._adapter.read(registration.client)
-            self._last_seen[breaker_id] = self._clock()
-            self._last_error_category.pop(breaker_id, None)
-            online = True
-        except TuyaIntegrationError as exc:
-            if isinstance(exc, TuyaMalformedResponseError):
-                self._last_error_category[breaker_id] = "malformed_response"
-            elif isinstance(exc, TuyaTimeoutError):
-                self._last_error_category[breaker_id] = "polling_timeout"
-            elif isinstance(exc, TuyaOfflineError):
-                self._last_error_category[breaker_id] = "offline"
-            else:
-                self._last_error_category[breaker_id] = "polling_failure"
-            status = BreakerStatus(
-                device_id=breaker_id,
-                name=registration.client.config.friendly_name,
-                status=DeviceStatus.OFFLINE,
-            )
-            online = False
+        with self.hardware_access(breaker_id):
+            try:
+                status = self._adapter.read(registration.client)
+                self._last_seen[breaker_id] = self._clock()
+                self._last_error_category.pop(breaker_id, None)
+                online = True
+            except TuyaIntegrationError as exc:
+                if isinstance(exc, TuyaMalformedResponseError):
+                    self._last_error_category[breaker_id] = "malformed_response"
+                elif isinstance(exc, TuyaTimeoutError):
+                    self._last_error_category[breaker_id] = "polling_timeout"
+                elif isinstance(exc, TuyaOfflineError):
+                    self._last_error_category[breaker_id] = "offline"
+                else:
+                    self._last_error_category[breaker_id] = "polling_failure"
+                status = BreakerStatus(
+                    device_id=breaker_id,
+                    name=registration.client.config.friendly_name,
+                    status=DeviceStatus.OFFLINE,
+                )
+                online = False
         return BreakerDevice(
             id=breaker_id,
             friendly_name=registration.client.config.friendly_name,
@@ -114,8 +120,33 @@ class BreakerService:
 
         return self._registration(breaker_id)
 
+    def describe_breaker(self, breaker_id: str) -> BreakerDevice:
+        """Return secret-free registration metadata without touching hardware."""
+
+        registration = self._registration(breaker_id)
+        return BreakerDevice(
+            id=breaker_id,
+            friendly_name=registration.client.config.friendly_name,
+            area=registration.client.config.area,
+            online=False,
+            capabilities=registration.capabilities,
+            status=BreakerStatus(
+                device_id=breaker_id,
+                name=registration.client.config.friendly_name,
+                status=DeviceStatus.UNKNOWN,
+            ),
+        )
+
     def get_last_error_category(self, breaker_id: str) -> str | None:
         return self._last_error_category.get(breaker_id)
+
+    @contextmanager
+    def hardware_access(self, breaker_id: str):
+        """Serialize all socket operations for one breaker, without blocking peers."""
+
+        self._registration(breaker_id)
+        with self._hardware_locks[breaker_id]:
+            yield
 
     def _registration(self, breaker_id: str) -> BreakerRegistration:
         try:

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import useInterval from "../../../hooks/useInterval";
 import { ENERGY_REFRESH_INTERVAL_MS } from "../../../utils/constants";
 import { TELEMETRY_STALE_AFTER_MS } from "../../../utils/constants";
-import { subscribeConnectionStatus, subscribeEnergyEvents } from "../../../services/realtime/energySocket";
+import { subscribeConnectionStatus, subscribeWithCoalescedRefresh } from "../../../services/realtime/energySocket";
 import { getEnergySummary } from "../services/energy.service";
 import useEnergyStore from "../store/energy.store";
 
@@ -26,9 +26,10 @@ export default function useEnergyDashboard() {
 
   useInterval(refresh, ENERGY_REFRESH_INTERVAL_MS);
 
-  useEffect(() => subscribeEnergyEvents((message) => {
-    if (["energy.update", "breaker.telemetry", "breaker.status", "device.online", "device.offline"].includes(message.type)) refresh();
-  }), [refresh]);
+  useEffect(() => subscribeWithCoalescedRefresh(
+    (message) => ["energy.update", "breaker.telemetry", "breaker.status", "device.online", "device.offline"].includes(message.type),
+    refresh,
+  ), [refresh]);
 
   useEffect(() => subscribeConnectionStatus((connectionStatus) => useEnergyStore.setState({ connectionStatus })), []);
 
