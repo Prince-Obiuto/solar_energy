@@ -56,7 +56,7 @@ def alert_context():
 
     app.dependency_overrides[get_db] = override_db
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             yield client, factory, users
     finally:
         app.dependency_overrides.clear()

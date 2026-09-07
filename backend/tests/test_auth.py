@@ -49,7 +49,7 @@ def auth_context():
             ))
         session.commit()
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             yield client, factory
     finally:
         app.dependency_overrides.clear()

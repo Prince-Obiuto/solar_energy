@@ -520,7 +520,7 @@ def test_application_lifespan_starts_and_stops_configured_collector() -> None:
     collector = LifecycleCollector()
     configure_energy_collector(collector)  # type: ignore[arg-type]
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             assert client.get("/health").status_code == 200
             assert collector.started is True
             assert collector.stopped is False

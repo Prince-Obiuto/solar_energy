@@ -1,5 +1,7 @@
 """Tests for normalized device/inverter integration contracts and API routes."""
 
+import pytest
+
 from apps.integrations.inverter.adapter import InverterAdapter
 from apps.integrations.inverter.mapper import normalize_inverter_snapshot
 from apps.integrations.tuya.adapter import TuyaBreakerAdapter
@@ -11,17 +13,16 @@ from apps.main import app
 
 def test_tuya_breaker_normalizer_maps_state_to_domain_model() -> None:
     normalized = normalize_tuya_breaker_state(
-        {
-            "switch": "on",
-            "current_ma": 8500,
-            "voltage_v": 230.0,
-            "power_w": 1500,
-        }
+        {"dps": {"1": True, "9": 0, "17": 1, "18": 8500,
+                 "19": 15000, "20": 2300, "38": "memory",
+                 "40": "relay", "41": False}}
     )
 
-    assert normalized["status"] == DeviceStatus.ONLINE.value
-    assert normalized["current_amps"] == 8.5
-    assert normalized["power_watts"] == 1500
+    assert normalized["switch_on"] is True
+    assert normalized["current_amperes"] == 8.5
+    assert normalized["active_power_watts"] == 1500
+    assert normalized["voltage_volts"] == 230
+    assert normalized["accumulated_energy"] == 0.001
 
 
 def test_inverter_snapshot_normalizer_uses_domain_fields() -> None:
@@ -41,13 +42,19 @@ def test_inverter_snapshot_normalizer_uses_domain_fields() -> None:
 
 
 def test_vendor_adapters_build_domain_objects() -> None:
-    breaker = TuyaBreakerAdapter().from_raw({"switch": "off"})
+    breaker = TuyaBreakerAdapter().from_raw({"dps": {"1": False}})
     assert breaker.device_type == DeviceType.BREAKER
-    assert breaker.status == DeviceStatus.OFFLINE
+    assert breaker.status == DeviceStatus.ONLINE
+    assert breaker.switch_on is False
 
     inverter = InverterAdapter().from_raw({"status": "online"})
     assert inverter.device_type == DeviceType.INVERTER
     assert inverter.status == DeviceStatus.ONLINE
+
+
+def test_legacy_tuya_payload_without_dps_is_rejected() -> None:
+    with pytest.raises(ValueError, match="does not contain datapoints"):
+        normalize_tuya_breaker_state({"switch": "on"})
 
 
 def test_device_and_energy_routes_are_available(client) -> None:

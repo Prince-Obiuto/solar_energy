@@ -10,11 +10,11 @@ const AreasPage = lazy(() => import("../../pages/AreasPage"));
 const ControlsPage = lazy(() => import("../../pages/ControlsPage"));
 const DashboardPage = lazy(() => import("../../pages/DashboardPage"));
 const DevicesPage = lazy(() => import("../../pages/DevicesPage"));
+const EnergyPage = lazy(() => import("../../pages/EnergyPage"));
 const LogsPage = lazy(() => import("../../pages/LogsPage"));
 const LoginPage = lazy(() => import("../../pages/LoginPage"));
 const NotFoundPage = lazy(() => import("../../pages/NotFoundPage"));
 const ReportsPage = lazy(() => import("../../pages/ReportsPage"));
-const SectionPage = lazy(() => import("../../pages/SectionPage"));
 const SettingsPage = lazy(() => import("../../pages/SettingsPage"));
 const UsersPage = lazy(() => import("../../pages/UsersPage"));
 
@@ -26,7 +26,7 @@ export default function AppRouter() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
           <Route path={APP_ROUTES.dashboard} element={<DashboardPage />} />
-          <Route path={APP_ROUTES.energy} element={<SectionPage title="Energy" />} />
+          <Route path={APP_ROUTES.energy} element={<EnergyPage />} />
           <Route path={APP_ROUTES.reports} element={<ReportsPage />} />
           <Route element={<RoleRoute roles={["staff", "admin"]} />}>
             <Route path={APP_ROUTES.areas} element={<AreasPage />} />

@@ -82,6 +82,31 @@ Swagger is available at `/docs`; health endpoints are `/health` and
 `/api/v1/health`. Production should run without `--reload` behind a TLS reverse
 proxy and with an explicit worker/process policy.
 
+### First-run installation
+
+After applying database migrations, initialize the singleton installation state:
+
+```bash
+cd backend
+alembic upgrade head
+python -m apps.scripts.initialize_setup
+```
+
+The command displays a cryptographically generated setup code exactly once;
+only its password-grade hash is stored. Keep the code private and use it with
+the `/api/v1/setup` flow to create the first administrator. Re-running the
+command does not reveal or replace the code. Before setup completion, explicitly
+replace a lost code with:
+
+```bash
+python -m apps.scripts.initialize_setup --rotate-token
+```
+
+`python -m apps.scripts.bootstrap_admin` remains available as the existing
+environment-driven recovery/headless administration option. Databases that
+already contain users are migrated with the administrator step marked configured;
+existing users and normal authentication are unchanged.
+
 ## 5. Frontend startup
 
 ```bash
@@ -115,7 +140,9 @@ Backend variables are documented with safe placeholders in
 - TinyTuya: `TUYA_DEVICE_FILE`, local socket timeout, polling interval and
   control verification delay. Secrets remain in the wizard-generated file.
 - Collection: independent BEVE/Tuya intervals, persistence interval, retry,
-  stale, WebSocket and health-monitor timings.
+  stale, WebSocket and health-monitor timings. `ENERGY_MAX_INTEGRATION_GAP_SECONDS`
+  bounds output-power integration so missing cloud intervals are not treated as
+  continuously measured load.
 - Alerts: optional electrical threshold values. Blank means disabled.
 - Backup: primary/secondary destination, retention, command and timeout.
 
@@ -226,7 +253,7 @@ Authenticated routes under `/api/v1`:
 - Auth: `GET /auth/me`.
 - Dashboard: `GET /dashboard`, `/dashboard/summary`, `/dashboard/areas`.
 - Devices/energy: `GET /devices`, `/devices/{id}`, `/energy`,
-  `/energy/latest`, `/energy/history`.
+  `/energy/latest`, `/energy/history`, and aggregate `/energy/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`.
 - Inverter: `GET /inverter`, `/inverter/battery`, `/inverter/solar`,
   `/inverter/grid`.
 - Breakers: `GET /breakers`, `/breakers/{id}` and ADMIN control routes for
@@ -338,6 +365,14 @@ PostgreSQL-backed raw/minute/hour/day history supports inverter, battery, solar,
 grid and area sources with bounded date/device/area filters. CSV uses ISO 8601
 timestamps; PDF provides a bounded technical summary. Access/export is audited.
 Tuya accumulated energy remains neutrally named because its unit is unverified.
+
+The authenticated Energy page uses `/energy/summary` and Africa/Lagos calendar
+days. Solar generation is the maximum verified daily cumulative Siseli value;
+system consumption is trapezoidal integration of persisted inverter output
+power with oversized gaps excluded. Grid imported energy remains unavailable
+until the import/export direction of Siseli `GridPower` is verified; raw grid
+power is not relabeled by assumption. Null means unavailable, while a measured
+zero remains zero.
 
 ## 18. Alerts
 

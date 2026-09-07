@@ -6,6 +6,7 @@ import Card from "../../../components/ui/Card";
 import Input from "../../../components/ui/Input";
 import Modal from "../../../components/ui/Modal";
 import StatusChip from "../../../components/ui/StatusChip";
+import { formatKilowatts } from "../../../utils/formatters";
 import {
   setChildLock, setCountdown, setIndicatorMode, setRelayRestoreMode, switchBreaker,
 } from "../services/control.service";
@@ -73,7 +74,7 @@ export default function BreakerControlCard({ breaker, onChanged }) {
     {notice && <Alert role="alert" tone={notice.tone}>{notice.text}</Alert>}
     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
       <p className="text-sm text-gray-500">Power</p><p className="mt-1 text-xl font-semibold text-gray-900">{stateLabel(relayOn)}</p>
-      <p className="mt-3 text-sm text-gray-600">Current load: {power == null ? "N/A" : `${(power / 1000).toFixed(2)} kW`}</p>
+      <p className="mt-3 text-sm text-gray-600">Current load: {formatKilowatts(power == null ? null : power / 1000)}</p>
       {capabilities.switching && <Button className="mt-4" disabled={!breaker.online || pending} onClick={() => setRequestedState(!relayOn)} variant={relayOn ? "danger" : "primary"}>Turn {relayOn ? "OFF" : "ON"} {name}</Button>}
     </div>
     <details className="rounded-xl border border-gray-200 p-4">

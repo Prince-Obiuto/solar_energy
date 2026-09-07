@@ -96,7 +96,7 @@ def control_context():
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_breaker_service] = lambda: service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             yield client, factory, fake, users
     finally:
         app.dependency_overrides.clear()

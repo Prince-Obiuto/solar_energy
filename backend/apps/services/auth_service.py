@@ -31,7 +31,9 @@ class AuthService:
         self.session.commit()
         return user
 
-    def bootstrap_admin(self, email: str, password: str, full_name: str | None = None) -> UserRecord:
+    def bootstrap_admin(
+        self, email: str, password: str, full_name: str | None = None, *, commit: bool = True,
+    ) -> UserRecord:
         normalized = normalize_email(email)
         if "@" not in normalized:
             raise ValueError("A valid initial administrator email is required")
@@ -48,7 +50,10 @@ class AuthService:
         )
         self.session.add(user)
         self._audit("auth.admin.bootstrapped", "info", "Initial administrator created", {"user_id": str(user.id)})
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
         self.session.refresh(user)
         return user
 

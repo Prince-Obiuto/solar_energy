@@ -1,6 +1,7 @@
 """Unified read-only energy snapshot API routes."""
 
-from datetime import datetime
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,8 +18,40 @@ from apps.jobs.energy_collector import get_energy_collector
 from apps.services.breaker_monitoring_service import BreakerMonitoringService
 from apps.services.breaker_service import get_breaker_service
 from apps.services.dashboard_service import DashboardService
+from apps.schemas.energy_analytics import EnergySummaryResponse
+from apps.services.energy_analytics_service import EnergyAnalyticsService
 
 router = APIRouter()
+
+
+def get_energy_analytics_service(
+    session: Session = Depends(get_db),
+) -> EnergyAnalyticsService:
+    return EnergyAnalyticsService(session)
+
+
+@router.get("/summary", response_model=EnergySummaryResponse)
+async def energy_summary(
+    from_: date | None = Query(default=None, alias="from"),
+    to: date | None = None,
+    service: EnergyAnalyticsService = Depends(get_energy_analytics_service),
+) -> EnergySummaryResponse:
+    """Return sanitized daily system-energy totals from persisted telemetry."""
+
+    today = datetime.now(ZoneInfo("Africa/Lagos")).date()
+    if (from_ is None) != (to is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="from and to must be supplied together",
+        )
+    start = from_ or today
+    end = to or today
+    try:
+        return service.summarize(start, end)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from None
 
 
 @router.get("")

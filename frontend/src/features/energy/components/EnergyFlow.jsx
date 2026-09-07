@@ -28,7 +28,7 @@ export default function EnergyFlow({ data }) {
       <PowerFlowDiagram className="mx-auto mt-6 max-w-3xl" nodes={nodes} />
       <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-gray-100 pt-5 sm:grid-cols-4">
         <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid connection</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.connected == null ? "--" : data.grid.connected ? "Connected" : "Disconnected"}</dd></div>
-        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid import</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{formatKilowatts(data.grid.importPower)}</dd></div>
+        <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid power</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{formatKilowatts(data.grid.power)}</dd></div>
         <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid voltage</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.voltage == null ? "--" : `${data.grid.voltage} V`}</dd></div>
         <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs text-gray-500">Grid frequency</dt><dd className="mt-1 text-sm font-semibold text-gray-800">{data.grid.frequency == null ? "--" : `${data.grid.frequency} Hz`}</dd></div>
       </dl>

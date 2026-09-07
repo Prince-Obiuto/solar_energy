@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     tuya_socket_timeout_seconds: float = Field(default=5, gt=0, le=60)
     tuya_control_verify_delay_seconds: float = Field(default=0.5, ge=0, le=10)
     telemetry_persist_interval_seconds: float = Field(default=60, gt=0)
+    energy_max_integration_gap_seconds: float = Field(default=900, gt=0)
     device_stale_after_seconds: float = Field(default=90, gt=0)
     telemetry_retry_attempts: int = Field(default=2, ge=1, le=5)
     telemetry_retry_delay_seconds: float = Field(default=1, ge=0)

@@ -9,9 +9,15 @@ from fastapi.testclient import TestClient
 
 from apps.integrations.inverter import MockBeveClient
 from apps.integrations.tuya.client import TuyaDeviceConfig, TuyaOfflineError
+from apps.jobs.energy_collector import (
+    CollectorSnapshot, DeviceCollectionState, configure_energy_collector,
+    get_energy_collector,
+)
 from apps.main import app
 from apps.core.permissions import require_staff, require_student
-from apps.models import DeviceCapability, DeviceType
+from apps.models import (
+    ConnectivityType, DataFreshness, DataSource, DeviceCapability, DeviceType, SourceStatus,
+)
 from apps.services.breaker_service import (
     BreakerRegistration,
     BreakerService,
@@ -157,6 +163,26 @@ def test_energy_service_combines_beve_and_area_breaker_telemetry(services) -> No
 
 def test_read_api_routes_use_injected_services(client: TestClient, services) -> None:
     inverter, breakers, devices, energy, _ = services
+    telemetry = inverter.get_current_state()
+    cached_breaker = breakers.get_breaker("breaker-library-test")
+
+    class SnapshotCollector:
+        async def get_snapshot(self):
+            return CollectorSnapshot(
+                inverter=telemetry,
+                breakers={cached_breaker.id: cached_breaker},
+                devices={"inverter-test": DeviceCollectionState(
+                    device_id="inverter-test", online=None, stale=False,
+                    connectivity_type=ConnectivityType.CLOUD, data_source=DataSource.BEVE_CLOUD,
+                    source_status=SourceStatus.CONNECTED, data_freshness=DataFreshness.LIVE,
+                    last_successful_update=telemetry.timestamp,
+                    last_successful_poll_at=telemetry.timestamp,
+                    source_timestamp=telemetry.timestamp,
+                )},
+            )
+
+    original_collector = get_energy_collector()
+    configure_energy_collector(SnapshotCollector())
     app.dependency_overrides[get_inverter_service] = lambda: inverter
     app.dependency_overrides[get_breaker_service] = lambda: breakers
     app.dependency_overrides[get_device_service] = lambda: devices
@@ -176,6 +202,7 @@ def test_read_api_routes_use_injected_services(client: TestClient, services) -> 
             "energy": client.get("/api/v1/energy/latest"),
         }
     finally:
+        configure_energy_collector(original_collector)
         app.dependency_overrides.clear()
 
     assert all(response.status_code == 200 for response in responses.values())

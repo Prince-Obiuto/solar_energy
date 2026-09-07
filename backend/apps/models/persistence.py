@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
@@ -91,6 +92,29 @@ class UserRecord(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now, server_default=func.now())
+
+
+class InstallationStateRecord(Base):
+    """Singleton progress record for secure first-run installation."""
+
+    __tablename__ = "installation_state"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_installation_state_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    setup_initialized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    admin_configured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    beve_configured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    tuya_configured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    devices_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    setup_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    setup_token_hash: Mapped[str | None] = mapped_column(String(255))
+    installation_version: Mapped[str | None] = mapped_column(String(50))
+    initialized_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    admin_configured_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
 
 
 class ReadingMixin:
@@ -317,6 +341,7 @@ Alert = AlertRecord
 User = UserRecord
 BackupRun = BackupRunRecord
 LoadSheddingState = LoadSheddingStateRecord
+InstallationState = InstallationStateRecord
 
 __all__ = [
     "Alert", "AlertRecord", "Area", "AreaRecord", "BackupRun", "BackupRunRecord", "BatteryReading", "BatteryReadingRecord",
@@ -324,4 +349,5 @@ __all__ = [
     "DeviceRecord", "GridReading", "GridReadingRecord", "InverterReading",
     "InverterReadingRecord", "SolarReading", "SolarReadingRecord", "SystemEvent",
     "SystemEventRecord", "User", "UserRecord", "LoadSheddingState", "LoadSheddingStateRecord",
+    "InstallationState", "InstallationStateRecord",
 ]

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.jobs.energy_collector import configure_energy_collector
+from apps.jobs.energy_collector import configure_energy_collector, get_energy_collector
 from apps.main import app
 from apps.core.permissions import get_websocket_user
 from apps.realtime.manager import (
@@ -205,16 +205,26 @@ async def test_breaker_event_uses_normalized_fields_without_tuya_dps() -> None:
 
 
 def test_websocket_endpoint_heartbeat_and_graceful_disconnect() -> None:
-    configure_energy_collector(None)
+    original = get_energy_collector()
     app.dependency_overrides[get_websocket_user] = lambda: None
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/v1/ws/energy") as websocket:
-            initial = websocket.receive_json()
-            assert initial["type"] == "system.status"
-            assert initial["data"]["status"] == "waiting_for_telemetry"
-            websocket.send_json({"type": "ping"})
-            pong = websocket.receive_json()
-            assert pong["type"] == "system.status"
-            assert pong["data"]["heartbeat"] == "pong"
-        assert connection_manager.connection_count == 0
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app, base_url="https://testserver") as client:
+            # Lifespan startup has completed; now deliberately exercise the
+            # endpoint's no-collector branch without triggering reconstruction.
+            started_collector = get_energy_collector()
+            configure_energy_collector(None)
+            try:
+                with client.websocket_connect("/api/v1/ws/energy") as websocket:
+                    initial = websocket.receive_json()
+                    assert initial["type"] == "system.status"
+                    assert initial["data"]["status"] == "waiting_for_telemetry"
+                    websocket.send_json({"type": "ping"})
+                    pong = websocket.receive_json()
+                    assert pong["type"] == "system.status"
+                    assert pong["data"]["heartbeat"] == "pong"
+                assert connection_manager.connection_count == 0
+            finally:
+                configure_energy_collector(started_collector)
+    finally:
+        configure_energy_collector(original)
+        app.dependency_overrides.clear()
