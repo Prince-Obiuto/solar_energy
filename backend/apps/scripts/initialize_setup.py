@@ -17,7 +17,7 @@ def main() -> int:
     print("Solar Energy Management System")
     if code is None:
         print("Setup is already initialized.")
-        print("Use --rotate-token before administrator creation if a replacement code is required.")
+        print("Use --rotate-token while setup is incomplete if a replacement code is required.")
         return 0
     print("First-time setup token rotated." if args.rotate_token else "First-time setup initialized.")
     print("\nSetup URL:\n    /setup")

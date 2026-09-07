@@ -112,6 +112,9 @@ class InstallationStateRecord(Base):
     initialized_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     admin_configured_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now, server_default=func.now()
     )

@@ -8,7 +8,7 @@ import uuid
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, event, func, inspect, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import sessionmaker
 
@@ -260,7 +260,55 @@ def test_alembic_upgrade_and_downgrade(tmp_path) -> None:
         "backup_runs", "installation_state",
     }
     assert required_tables <= set(inspect(engine).get_table_names())
+    installation_columns = {
+        column["name"] for column in inspect(engine).get_columns("installation_state")
+    }
+    assert {"created_at", "updated_at", "setup_token_hash"} <= installation_columns
 
     command.downgrade(config, "base")
     assert required_tables.isdisjoint(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_installation_migration_preserves_existing_users_and_disables_first_admin(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "existing-installation.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "20260902_06")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    metadata = MetaData()
+    users = Table("users", metadata, autoload_with=engine)
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(users.insert().values(
+            id=uuid.uuid4().hex,
+            email="existing-admin@example.test",
+            full_name="Existing Admin",
+            password_hash="not-a-real-login-hash",
+            role="admin",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        ))
+
+    command.upgrade(config, "head")
+    migrated = MetaData()
+    installation = Table("installation_state", migrated, autoload_with=engine)
+    users_after = Table("users", migrated, autoload_with=engine)
+    with engine.connect() as connection:
+        state = connection.execute(select(installation)).mappings().one()
+        assert state["id"] == 1
+        assert state["setup_initialized"] is True
+        assert state["admin_configured"] is True
+        assert state["setup_token_hash"] is None
+        assert connection.scalar(select(func.count()).select_from(users_after)) == 1
+
+    command.downgrade(config, "20260902_06")
+    assert "installation_state" not in inspect(engine).get_table_names()
+    assert "users" in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(users_after)) == 1
     engine.dispose()

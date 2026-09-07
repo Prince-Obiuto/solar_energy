@@ -3,6 +3,7 @@
 from apps.core.config import settings
 from apps.db.session import session_scope
 from apps.services.auth_service import AuthService
+from apps.services.setup_service import SetupService
 
 
 def main() -> None:
@@ -13,7 +14,9 @@ def main() -> None:
             settings.initial_admin_email,
             settings.initial_admin_password.get_secret_value(),
             settings.initial_admin_full_name,
+            commit=False,
         )
+        SetupService(session).reconcile_existing_installation()
     print(f"Initial administrator is ready: {user.email}")
 
 

@@ -107,6 +107,12 @@ environment-driven recovery/headless administration option. Databases that
 already contain users are migrated with the administrator step marked configured;
 existing users and normal authentication are unchanged.
 
+This foundation exposes only setup status, setup-code verification, and the
+one-time administrator action. Verification and administrator attempts use the
+existing in-process security rate limiter. BEVE credentials, Tuya devices, device
+verification, completion gating, and the React setup wizard belong to later
+setup phases and are not implemented here.
+
 ## 5. Frontend startup
 
 ```bash
@@ -245,8 +251,9 @@ debounced/coalesced so bursts result in at most one request in flight.
 
 ## 12. REST endpoint inventory
 
-Public: `GET /`, `GET /health`, `GET /api/v1/health`, `POST /auth/login`, and
-`POST /auth/logout` under `/api/v1`.
+Public: `GET /`, `GET /health`, `GET /api/v1/health`, `POST /auth/login`,
+`POST /auth/logout`, `GET /setup/status`, `POST /setup/verify`, and the
+one-time-token-protected `POST /setup/administrator` under `/api/v1`.
 
 Authenticated routes under `/api/v1`:
 
