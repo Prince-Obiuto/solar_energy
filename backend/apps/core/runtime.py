@@ -190,4 +190,9 @@ def _beve_config(config: Settings) -> BeveConfig | None:
     if len(present) != len(required):
         missing = ", ".join(sorted(set(required) - present))
         raise RuntimeConfigurationError(f"BEVE configuration is incomplete; missing: {missing}")
-    return BeveConfig(**required, time_zone=config.beve_time_zone, timeout_seconds=config.beve_timeout_seconds)
+    return BeveConfig(
+        **required,
+        base_url=config.beve_base_url,
+        time_zone=config.beve_time_zone,
+        timeout_seconds=config.beve_timeout_seconds,
+    )

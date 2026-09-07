@@ -30,6 +30,9 @@ dist-ssr
 # Local backend configuration and hardware discovery artifacts
 /.env
 .env
+**/.env.*
+/.env.old
+!**/.env.example
 **/devices.json
 **/snapshot.json
 **/tinytuya.json
@@ -38,5 +41,7 @@ dist-ssr
 /energy/
 /backend/backups/
 *.partial
+**/master.key
+*.runtime-key
 
 .venv/

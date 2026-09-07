@@ -33,12 +33,13 @@ connectivity is local and may mark a breaker offline after bounded LAN retries.
 ```text
 backend/
   apps/api/             FastAPI route adapters
-  apps/core/            settings, security, permissions, logging, rate limit
+  apps/core/            settings, authentication, permissions, logging, rate limit
   apps/db/              SQLAlchemy engine and transactional sessions
   apps/integrations/    BEVE and TinyTuya protocol boundaries
   apps/jobs/            collector, health monitor, backup job
   apps/models/          domain and SQLAlchemy models
   apps/realtime/        WebSocket connection/event management
+  apps/security/        runtime-secret encryption and external key handling
   apps/schemas/         API and reusable Pydantic schemas
   apps/services/        application services
   apps/scripts/         admin bootstrap and one-shot backup commands
@@ -113,6 +114,29 @@ existing in-process security rate limiter. BEVE credentials, Tuya devices, devic
 verification, completion gating, and the React setup wizard belong to later
 setup phases and are not implemented here.
 
+### Runtime configuration master key
+
+Persistent installation configuration uses an external Fernet master key. Set
+`RUNTIME_MASTER_KEY_FILE` to a path outside the source tree, then initialize it
+once:
+
+```bash
+cd backend
+python -m apps.scripts.initialize_runtime_key
+```
+
+The command creates parent directories when necessary, writes a new key with
+mode `0600` on Linux, and prints only its path. If a valid file already exists,
+the command reports that fact and leaves it unchanged. It never rotates or
+replaces a key. An absent setting, unreadable/missing key, or malformed existing
+key produces an explicit safe error.
+
+Back up the master key separately with access restricted to authorized system
+administrators. Encrypted configuration cannot be recovered if this key is
+lost. A database backup contains ciphertext, not usable plaintext credentials;
+restoration therefore requires both the database and its matching key. Never
+commit, log, email, or place `master.key` in a database backup.
+
 ## 5. Frontend startup
 
 ```bash
@@ -139,7 +163,9 @@ Backend variables are documented with safe placeholders in
 - HTTP security: `CORS_ORIGINS`, `ALLOWED_HOSTS`, `MAX_REQUEST_BODY_BYTES`,
   `LOGIN_RATE_LIMIT_ATTEMPTS`, `LOGIN_RATE_LIMIT_WINDOW_SECONDS`, `LOG_LEVEL`.
 - Database/auth: `DATABASE_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`,
-  `ACCESS_TOKEN_EXPIRE_MINUTES`, initial-admin values.
+  `ACCESS_TOKEN_EXPIRE_MINUTES`, initial-admin values. `RUNTIME_MASTER_KEY_FILE`
+  points to the separate runtime-secret encryption key; relative paths resolve
+  from `backend/`, while absolute paths support production secret mounts.
 - BEVE/Siseli: username, password, station/device identifiers, time zone and
   timeout. The `siseli` package owns vendor authentication and request signing;
   application IDs/secrets are not application configuration.
@@ -161,7 +187,17 @@ values must never use repository defaults.
 Create a dedicated database and least-privilege application account using local
 department policy. Put its URL only in the protected backend environment file.
 The schema stores areas/devices, normalized telemetry, users, control/system
-events, alerts, and backup history. Hardware secrets are not Device columns.
+events, alerts, backup history, and bounded runtime configuration. Hardware
+secrets are not Device columns. Runtime secret rows contain authenticated
+Fernet ciphertext; non-secret rows contain compact JSON-serialized values.
+
+Runtime configuration is split into `beve`, `tuya_cloud`, `tuya_devices`, and
+`system` namespaces with a unique `(namespace, key)` constraint. Known sensitive
+keys—including BEVE username/password, Tuya access credentials, and local device
+keys—cannot be written through the service as plaintext. Configuration changes
+create `installation.configuration` audit events containing only namespace,
+changed key name, action, secret classification, and optional actor identifier.
+Values and ciphertext are excluded.
 
 Telemetry tables have device/timestamp and timestamp indexes. Device, alert,
 event, user, control request, and backup status/time access paths have dedicated
@@ -240,6 +276,15 @@ FastAPI lifespan composes the environment-backed read-only BEVE client, every
 configured TinyTuya breaker, normalized services, persistence adapter, event
 publisher and collector. Development can start without hardware configuration;
 partially supplied BEVE settings fail with a sanitized configuration error.
+
+The Phase 2 runtime-configuration provider can resolve typed BEVE values with
+per-field `persisted`, `environment`, or `missing` source metadata. A persisted
+value wins; an absent row falls back to the existing environment setting. A
+persisted encrypted row that cannot be decrypted fails explicitly and never
+falls back to an environment credential or gets overwritten. To avoid changing
+verified hardware startup before the later credential-verification phase,
+`build_application_runtime()` still uses its existing environment/device-file
+composition in this phase. No secrets are copied to PostgreSQL automatically.
 
 The collector uses monotonic start-to-start scheduling, bounded retries, and a
 per-source async lock. Breaker socket access also has a shared per-device lock:
@@ -419,6 +464,8 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 - Request body limiting uses declared Content-Length; the reverse proxy must also
   enforce body and connection limits.
 - No automated frontend unit-test script is currently defined.
+- Runtime configuration is not yet wired into hardware composition; Phase 3
+  will do so together with narrowly scoped BEVE credential verification.
 
 ## 22. Hardware-specific TODOs
 
@@ -428,6 +475,7 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
   offices breakers before operational use.
 - Verify BEVE session behavior, mapping, station/device selection, and time-zone
   handling against the deployed FiveStar inverter after vendor changes.
-- Define and secure the production runtime composition/onboarding mechanism.
+- Adopt the typed persistent configuration provider during the scoped BEVE and
+  Tuya onboarding phases after credential/device verification succeeds.
 - Test network loss/recovery, stale thresholds, and polling rates on the actual
   department LAN without hammering either hardware source.

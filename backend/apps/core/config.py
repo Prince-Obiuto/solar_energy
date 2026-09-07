@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)
     login_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     database_url: SecretStr = SecretStr("postgresql+psycopg://localhost/solar_energy")
+    runtime_master_key_file: Path | None = None
     jwt_secret_key: SecretStr = SecretStr("development-only-change-me")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = Field(default=60, gt=0, le=1440)
@@ -56,6 +57,7 @@ class Settings(BaseSettings):
     backup_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     beve_username: SecretStr | None = None
     beve_password: SecretStr | None = None
+    beve_base_url: str = "https://solar.siseli.com"
     beve_station_id: str | None = None
     beve_device_id: str | None = None
     beve_time_zone: str = "Africa/Lagos"
@@ -86,6 +88,15 @@ class Settings(BaseSettings):
     @property
     def allowed_host_list(self) -> list[str]:
         return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def runtime_master_key_path(self) -> Path | None:
+        """Resolve a configured key path relative to the backend directory."""
+
+        if self.runtime_master_key_file is None:
+            return None
+        path = self.runtime_master_key_file
+        return path if path.is_absolute() else (BACKEND_DIR / path).resolve()
 
     @model_validator(mode="after")
     def require_production_jwt_secret(self) -> "Settings":

@@ -120,6 +120,28 @@ class InstallationStateRecord(Base):
     )
 
 
+class RuntimeConfigurationRecord(Base):
+    """Bounded runtime setting; secret values contain only encrypted ciphertext."""
+
+    __tablename__ = "runtime_configuration"
+    __table_args__ = (
+        UniqueConstraint("namespace", "key", name="uq_runtime_configuration_namespace_key"),
+        Index("ix_runtime_configuration_namespace", "namespace"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    namespace: Mapped[str] = mapped_column(String(50), nullable=False)
+    key: Mapped[str] = mapped_column(String(120), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+
+
 class ReadingMixin:
     id: Mapped[int] = mapped_column(READING_ID, primary_key=True, autoincrement=True)
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
@@ -345,6 +367,7 @@ User = UserRecord
 BackupRun = BackupRunRecord
 LoadSheddingState = LoadSheddingStateRecord
 InstallationState = InstallationStateRecord
+RuntimeConfiguration = RuntimeConfigurationRecord
 
 __all__ = [
     "Alert", "AlertRecord", "Area", "AreaRecord", "BackupRun", "BackupRunRecord", "BatteryReading", "BatteryReadingRecord",
@@ -353,4 +376,5 @@ __all__ = [
     "InverterReadingRecord", "SolarReading", "SolarReadingRecord", "SystemEvent",
     "SystemEventRecord", "User", "UserRecord", "LoadSheddingState", "LoadSheddingStateRecord",
     "InstallationState", "InstallationStateRecord",
+    "RuntimeConfiguration", "RuntimeConfigurationRecord",
 ]

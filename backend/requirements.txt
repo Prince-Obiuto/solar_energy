@@ -4,6 +4,7 @@ sqlalchemy
 psycopg[binary]
 alembic
 pydantic-settings
+cryptography
 python-jose[cryptography]
 passlib[bcrypt]
 httpx

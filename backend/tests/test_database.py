@@ -258,12 +258,23 @@ def test_alembic_upgrade_and_downgrade(tmp_path) -> None:
         "areas", "devices", "inverter_readings", "battery_readings", "solar_readings",
         "grid_readings", "breaker_readings", "control_events", "system_events", "alerts", "users",
         "backup_runs", "installation_state",
+        "runtime_configuration",
     }
     assert required_tables <= set(inspect(engine).get_table_names())
     installation_columns = {
         column["name"] for column in inspect(engine).get_columns("installation_state")
     }
     assert {"created_at", "updated_at", "setup_token_hash"} <= installation_columns
+    runtime_columns = {
+        column["name"] for column in inspect(engine).get_columns("runtime_configuration")
+    }
+    assert {
+        "id", "namespace", "key", "value", "is_secret", "created_at", "updated_at"
+    } == runtime_columns
+    assert any(
+        set(constraint["column_names"]) == {"namespace", "key"}
+        for constraint in inspect(engine).get_unique_constraints("runtime_configuration")
+    )
 
     command.downgrade(config, "base")
     assert required_tables.isdisjoint(inspect(engine).get_table_names())
