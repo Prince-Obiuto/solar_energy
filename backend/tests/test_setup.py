@@ -28,9 +28,11 @@ PASSWORD = "correct horse battery staple"
 def isolate_setup_rate_limiter():
     setup_limiter.reset("verify:testclient")
     setup_limiter.reset("administrator:testclient")
+    setup_limiter.reset("complete:testclient")
     yield
     setup_limiter.reset("verify:testclient")
     setup_limiter.reset("administrator:testclient")
+    setup_limiter.reset("complete:testclient")
 
 
 @pytest.fixture
@@ -110,7 +112,11 @@ def test_completed_setup_is_locked_and_status_is_minimal(setup_context) -> None:
     with setup_context() as session:
         service = SetupService(session); service.initialize()
         state = service.get_state(); state.setup_completed = True; state.completed_at = datetime.now(UTC); session.commit()
-        assert service.progress() == {"setup_required": False, "setup_completed": True}
+        assert service.progress() == {
+            "setup_required": False,
+            "setup_completed": True,
+            "activation_required": False,
+        }
         with pytest.raises(SetupLockedError): service.initialize(rotate=True)
 
 
@@ -262,6 +268,7 @@ def test_setup_api_rate_limits_verification_and_locks_completed_mutation(
         assert completed_status.json() == {
             "setup_required": False,
             "setup_completed": True,
+            "activation_required": False,
         }
         locked = client.post("/api/v1/setup/administrator", json={
             "setup_code": "not-returned",

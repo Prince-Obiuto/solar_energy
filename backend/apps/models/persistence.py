@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -107,11 +108,15 @@ class InstallationStateRecord(Base):
     tuya_configured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     devices_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     setup_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    runtime_activation_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     setup_token_hash: Mapped[str | None] = mapped_column(String(255))
     installation_version: Mapped[str | None] = mapped_column(String(50))
     initialized_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     admin_configured_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    runtime_activated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), nullable=False, default=utc_now, server_default=func.now()
     )

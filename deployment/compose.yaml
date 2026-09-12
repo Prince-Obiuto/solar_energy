@@ -1,0 +1,155 @@
+name: ${COMPOSE_PROJECT_NAME:-solar-energy}
+
+x-backend: &backend
+  image: ${COMPOSE_PROJECT_NAME:-solar-energy}-backend:local
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  network_mode: host
+  user: "10001:10001"
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,noexec,size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &backend-environment
+    APP_ENV: production
+    TZ: Africa/Lagos
+    API_V1_PREFIX: /api/v1
+    ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Set ALLOWED_HOSTS in deployment/.env}
+    # Whitespace parses as an empty origin list without env_ignore_empty fallback.
+    CORS_ORIGINS: " "
+    POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+    POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret
+    RUNTIME_MASTER_KEY_FILE: /run/solar-config/master.key
+    TUYA_DEVICE_FILE: /run/solar-config/devices.json
+    BACKUP_DESTINATION: /var/lib/solar-backups
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    BEVE_TIME_ZONE: Africa/Lagos
+    BEVE_POLL_INTERVAL_SECONDS: ${BEVE_POLL_INTERVAL_SECONDS:-30}
+    TUYA_POLL_INTERVAL_SECONDS: ${TUYA_POLL_INTERVAL_SECONDS:-10}
+    TELEMETRY_PERSIST_INTERVAL_SECONDS: ${TELEMETRY_PERSIST_INTERVAL_SECONDS:-60}
+  secrets: [postgres_password, jwt_secret]
+  volumes:
+    - type: bind
+      source: ${CONFIG_DIRECTORY:?Set CONFIG_DIRECTORY}
+      target: /run/solar-config
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      TZ: UTC
+      PGTZ: UTC
+    secrets: [postgres_password]
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    security_opt: [no-new-privileges:true]
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    command: [alembic, upgrade, head]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    stop_grace_period: 60s
+    volumes:
+      - type: bind
+        source: ${CONFIG_DIRECTORY:?Set CONFIG_DIRECTORY}
+        target: /run/solar-config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BACKUP_DIRECTORY:?Set BACKUP_DIRECTORY}
+        target: /var/lib/solar-backups
+        bind:
+          create_host_path: false
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    image: ${COMPOSE_PROJECT_NAME:-solar-energy}-web:local
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,noexec,size=64m
+      - /var/run:rw,nosuid,noexec,size=4m
+    cap_drop: [ALL]
+    # Root master binds port 80 and drops workers to nginx; no privileged mode.
+    cap_add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  runtime-key-init:
+    <<: *backend
+    profiles: [operations]
+    restart: "no"
+    command: [python, -m, apps.scripts.initialize_runtime_key]
+    healthcheck:
+      disable: true
+    volumes:
+      - type: bind
+        source: ${CONFIG_DIRECTORY:?Set CONFIG_DIRECTORY}
+        target: /run/solar-config
+        bind:
+          create_host_path: false
+
+  setup-init:
+    <<: *backend
+    profiles: [operations]
+    restart: "no"
+    command: [python, -m, apps.scripts.initialize_setup]
+    # Attach operator stdout, but never retain the one-time setup code in logs.
+    logging:
+      driver: none
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  # Project-scoped named volume: choose a different project for disposable tests.
+  postgres_data:
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:?Set POSTGRES_PASSWORD_FILE to an external file}
+  jwt_secret:
+    file: ${JWT_SECRET_KEY_FILE:?Set JWT_SECRET_KEY_FILE to an external file}

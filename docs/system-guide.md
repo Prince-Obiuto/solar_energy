@@ -51,11 +51,13 @@ frontend/
   src/components/       shared UI, layout, charts and tables
   src/services/         Axios and realtime clients
 docs/                   system-level documentation
+deployment/             Linux VM Compose, Nginx and one-shot operational workflows
 ```
 
 ## 3. Local development instructions
 
-Requirements are Python 3.12-compatible tooling, PostgreSQL, Node.js 20+, and
+Requirements are Python 3.12-compatible tooling, PostgreSQL, Node.js 24 (or a
+version satisfying the checked-in Vite/ESLint engine constraints), and
 npm. Do not use real hardware credentials in a shared development environment.
 
 ```bash
@@ -116,16 +118,25 @@ operator through these stages:
 2. Test and securely save the read-only BEVE/Siseli configuration.
 3. Use temporary Tuya Cloud credentials to retrieve candidates, scan the local
    LAN, select breakers, assign friendly names/areas, and verify each device.
-4. Review the saved configuration and pending runtime activation.
+4. Review the saved configuration and permanently finalize first-run setup.
 
 Setup codes, passwords, Tuya Cloud credentials, and opaque onboarding sessions
 remain only in browser memory and are not written to browser storage. Tuya Cloud
 credentials are used ephemerally and are not persisted by the backend. Closing
 or reloading the page discards temporary authorization and discovery state, but
 completed stages resume from the database after the operator re-enters the
-setup code. Saved hardware configuration becomes active after final setup and a
-backend restart. The final completion/lock action is intentionally reserved for
-the next installation phase.
+setup code. Finalization performs a local decryption and typed-configuration
+preflight; it does not contact BEVE, Tuya Cloud, or physical breakers. A
+successful finalization permanently invalidates the setup code and closes every
+first-run mutation endpoint.
+
+After finalization, the application shows an activation screen and keeps normal
+routes locked. Restart the backend service once. Startup constructs the normal
+runtime from authoritative persisted configuration and only then acknowledges
+activation, after which unauthenticated users proceed to the normal login page.
+If runtime composition fails, activation remains pending and the activation
+screen remains available. First-run setup cannot be reopened; future hardware
+changes require a separate authenticated administrator configuration workflow.
 
 ### Runtime configuration master key
 
@@ -166,6 +177,21 @@ npm run build
 
 Serve `frontend/dist/` through the production web server and proxy `/api/v1`
 including WebSocket upgrades to FastAPI.
+
+### Linux VM containers
+
+Phase 7 adds the [Compose deployment workflow](../deployment/README.md) for an
+Ubuntu Server VM on Proxmox: PostgreSQL, a single backend worker/collector and
+Nginx serving the React build. Separate one-shot services run migrations,
+initialize the external runtime key, and initialize first-run setup. Normal
+restarts preserve Phase 6 activation behavior. The backend and Nginx use host
+networking for TinyTuya LAN discovery, while backend/database listeners remain
+loopback-only. PostgreSQL and runtime keys live outside container layers.
+
+This phase provides HTTP container validation only. Real credential onboarding
+requires the subsequent HTTPS deployment phase; production Secure cookies remain
+enabled. Docker daemon access, the reviewed local `energy/siseli` dependency,
+and real LAN verification are prerequisites documented in the deployment guide.
 
 ## 6. Environment variables
 

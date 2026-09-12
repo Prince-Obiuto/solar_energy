@@ -264,7 +264,13 @@ def test_alembic_upgrade_and_downgrade(tmp_path) -> None:
     installation_columns = {
         column["name"] for column in inspect(engine).get_columns("installation_state")
     }
-    assert {"created_at", "updated_at", "setup_token_hash"} <= installation_columns
+    assert {
+        "created_at",
+        "updated_at",
+        "setup_token_hash",
+        "runtime_activation_pending",
+        "runtime_activated_at",
+    } <= installation_columns
     runtime_columns = {
         column["name"] for column in inspect(engine).get_columns("runtime_configuration")
     }
@@ -315,6 +321,8 @@ def test_installation_migration_preserves_existing_users_and_disables_first_admi
         assert state["setup_initialized"] is True
         assert state["admin_configured"] is True
         assert state["setup_token_hash"] is None
+        assert state["runtime_activation_pending"] is False
+        assert state["runtime_activated_at"] is None
         assert connection.scalar(select(func.count()).select_from(users_after)) == 1
 
     command.downgrade(config, "20260902_06")

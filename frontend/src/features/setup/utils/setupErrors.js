@@ -27,8 +27,18 @@ const TUYA_MESSAGES = {
   configuration_invalid: "The selected breaker configuration is invalid.",
 };
 
+const COMPLETION_MESSAGES = {
+  configuration_incomplete: "Complete and verify every setup stage before finalizing.",
+  master_key_unavailable: "The secure runtime key is unavailable. Ask the installer to verify the server configuration.",
+  beve_configuration_invalid: "The saved inverter configuration could not be validated. Review the inverter setup before finalizing.",
+  tuya_configuration_invalid: "The saved smart-breaker configuration could not be validated. Review the breaker setup before finalizing.",
+  runtime_configuration_invalid: "The saved runtime configuration could not be validated.",
+};
+
 export function setupResultMessage(category, fallback, kind = "tuya") {
-  const messages = kind === "beve" ? BEVE_MESSAGES : TUYA_MESSAGES;
+  const messages = kind === "beve"
+    ? BEVE_MESSAGES
+    : kind === "completion" ? COMPLETION_MESSAGES : TUYA_MESSAGES;
   return messages[category] || fallback || "The setup operation could not be completed.";
 }
 

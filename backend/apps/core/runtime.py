@@ -62,6 +62,7 @@ def build_application_runtime(
     tuya_client_factory: Callable[[Any], object] | None = None,
     session_factory: sessionmaker[Session] = SessionLocal,
     provision: bool = True,
+    require_persisted_configuration: bool = False,
 ) -> ApplicationRuntime:
     """Compose configured hardware without making a network request."""
 
@@ -85,8 +86,13 @@ def build_application_runtime(
         config,
         session_factory,
         client_factory=tuya_client_factory,
+        require_persisted=require_persisted_configuration,
     )
-    beve_config = _resolved_beve_config(config, session_factory)
+    beve_config = _resolved_beve_config(
+        config,
+        session_factory,
+        require_persisted=require_persisted_configuration,
+    )
     inverter_reference = beve_config.device_id if beve_config else None
     if provision and (inverter_reference or registrations):
         provision_hardware_devices(session_factory, registrations, inverter_reference=inverter_reference)
@@ -204,21 +210,38 @@ def _beve_config(config: Settings) -> BeveConfig | None:
 def _resolved_beve_config(
     config: Settings,
     session_factory: sessionmaker[Session],
+    *,
+    require_persisted: bool = False,
 ) -> BeveConfig | None:
     """Prefer verified persistent values when runtime encryption is enabled."""
 
     # Environment-only development remains database-independent. A configured
     # master key indicates that persistent onboarding configuration is active.
     if config.runtime_master_key_path is None:
+        if require_persisted:
+            raise RuntimeConfigurationError(
+                "Persisted BEVE configuration is required"
+            )
         return _beve_config(config)
 
-    from apps.services.runtime_configuration_service import RuntimeConfigurationService
+    from apps.services.runtime_configuration_service import (
+        ConfigurationSource,
+        RuntimeConfigurationService,
+    )
 
     with session_factory() as session:
         resolved = RuntimeConfigurationService(
             session,
             environment=config,
         ).get_beve_configuration()
+    required = ("username", "password", "station_id", "device_id")
+    if require_persisted and any(
+        resolved.sources.get(field) != ConfigurationSource.PERSISTED
+        for field in required
+    ):
+        raise RuntimeConfigurationError(
+            "Persisted BEVE configuration is required"
+        )
     if not resolved.configured:
         if len(resolved.missing_fields) == 4:
             return None
@@ -242,6 +265,7 @@ def _resolved_tuya_registrations(
     session_factory: sessionmaker[Session],
     *,
     client_factory: Callable[[Any], object],
+    require_persisted: bool = False,
 ) -> list[BreakerRegistration]:
     """Prefer encrypted persisted devices, then retain devices.json fallback."""
 
@@ -259,12 +283,19 @@ def _resolved_tuya_registrations(
                 environment=config,
             ).get_tuya_device_configuration()
         if document is not None:
-            return load_breaker_registrations_from_document(
+            registrations = load_breaker_registrations_from_document(
                 document,
                 client_factory=client_factory,
                 require_supported_metadata=False,
                 strict=True,
             )
+            if require_persisted and not registrations:
+                raise RuntimeConfigurationError(
+                    "Persisted Tuya configuration is required"
+                )
+            return registrations
+    if require_persisted:
+        raise RuntimeConfigurationError("Persisted Tuya configuration is required")
     return load_breaker_registrations(
         config.tuya_device_file,
         client_factory=client_factory,

@@ -5,9 +5,10 @@ import Alert from "../../../components/ui/Alert";
 import Button from "../../../components/ui/Button";
 import Card from "../../../components/ui/Card";
 import Loader from "../../../components/ui/Loader";
+import Modal from "../../../components/ui/Modal";
 import setupService from "../services/setup.service";
 import useSetupStore from "../store/setup.store";
-import { setupRequestError } from "../utils/setupErrors";
+import { setupRequestError, setupResultMessage } from "../utils/setupErrors";
 
 function ReviewRow({ detail, label }) {
   return (
@@ -24,8 +25,12 @@ export default function SetupReview({ status }) {
   const tuyaConfiguration = useSetupStore((state) => state.tuyaConfiguration);
   const setTuyaConfiguration = useSetupStore((state) => state.setTuyaConfiguration);
   const restartRequired = useSetupStore((state) => state.restartRequired);
+  const markSetupCompleted = useSetupStore((state) => state.markSetupCompleted);
+  const refreshStatus = useSetupStore((state) => state.refreshStatus);
   const [requestState, setRequestState] = useState("loading");
   const [error, setError] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -44,7 +49,38 @@ export default function SetupReview({ status }) {
   const loading = !tuyaConfiguration && Boolean(setupCode) && Boolean(status?.beve_configured) && requestState === "loading";
   const breakerDetail = count == null
     ? (status?.devices_verified ? "Verified and configured" : "Not yet configured")
-    : `${count} breaker${count === 1 ? "" : "s"} configured`;
+    : `${count} breaker${count === 1 ? "" : "s"} configured and verified`;
+  const canFinalize = status?.next_step === "confirm" && !status?.setup_completed;
+
+  const finalize = async () => {
+    setFinalizing(true);
+    setError(null);
+    try {
+      const response = await setupService.completeSetup(setupCode);
+      if (!response.success) {
+        setError(setupResultMessage(response.category, response.message, "completion"));
+        setConfirming(false);
+        return;
+      }
+      markSetupCompleted(response.setup);
+    } catch (caughtError) {
+      if (caughtError?.response?.status === 410) {
+        try {
+          const latest = await refreshStatus({ force: true });
+          if (!latest.setup_required) {
+            markSetupCompleted(latest);
+            return;
+          }
+        } catch {
+          // Fall through to the safe request error below.
+        }
+      }
+      setError(setupRequestError(caughtError, "Setup could not be finalized."));
+      setConfirming(false);
+    } finally {
+      setFinalizing(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -59,9 +95,9 @@ export default function SetupReview({ status }) {
         {error && <div className="mt-5"><Alert role="alert" tone="warning">{error}</Alert></div>}
         <dl className="mt-5">
           <ReviewRow detail={status?.admin_configured ? "Configured" : "Not configured"} label="Administrator" />
-          <ReviewRow detail={status?.beve_configured ? "Verified" : "Not configured"} label="Inverter monitoring" />
+          <ReviewRow detail={status?.beve_configured ? "Configured and verified" : "Not configured"} label="Inverter monitoring" />
           <ReviewRow detail={breakerDetail} label="Smart breakers" />
-          <ReviewRow detail="Credentials stored securely by the backend" label="Security" />
+          <ReviewRow detail="Runtime credentials encrypted" label="Security" />
           <ReviewRow detail={(restartRequired || status?.beve_configured || status?.tuya_configured) ? "Restart required after finalization" : "No pending runtime activation"} label="Runtime activation" />
         </dl>
         {tuyaConfiguration?.devices?.length > 0 && (
@@ -78,8 +114,15 @@ export default function SetupReview({ status }) {
           </div>
         )}
       </Card>
-      <Alert icon={LockClosedIcon} tone="info"><strong>Setup is ready to be finalized.</strong> Final completion and runtime activation are added in Phase 6. A backend restart will then activate the saved hardware configuration.</Alert>
-      <Button className="w-full sm:w-auto" disabled>Ready to finalize</Button>
+      <Alert icon={LockClosedIcon} tone="info"><strong>Setup is ready to be finalized.</strong> Finalization permanently closes this first-time setup process. A backend restart will then activate the saved hardware configuration.</Alert>
+      <Button className="w-full sm:w-auto" disabled={!canFinalize || finalizing} onClick={() => setConfirming(true)}>Finalize Setup</Button>
+      <Modal isOpen={confirming} onClose={() => { if (!finalizing) setConfirming(false); }} title="Finalize first-time setup?">
+        <p className="text-sm leading-6 text-gray-600">Finalizing setup will lock the first-time setup process. Hardware settings can be changed later only through authenticated administrator configuration tools.</p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button disabled={finalizing} onClick={() => setConfirming(false)} variant="ghost">Cancel</Button>
+          <Button disabled={finalizing} onClick={finalize}>{finalizing ? "Finalizing setup…" : "Finalize setup"}</Button>
+        </div>
+      </Modal>
     </div>
   );
 }

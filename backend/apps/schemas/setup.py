@@ -32,6 +32,7 @@ class InitialAdministratorRequest(SetupCodeRequest):
 class SetupProgress(BaseModel):
     setup_required: bool
     setup_completed: bool
+    activation_required: bool | None = None
     setup_initialized: bool | None = None
     admin_configured: bool | None = None
     beve_configured: bool | None = None
@@ -42,6 +43,23 @@ class SetupProgress(BaseModel):
 
 class SetupVerificationResponse(BaseModel):
     valid: bool
+
+
+SetupCompletionErrorCategory = Literal[
+    "configuration_incomplete",
+    "master_key_unavailable",
+    "beve_configuration_invalid",
+    "tuya_configuration_invalid",
+    "runtime_configuration_invalid",
+]
+
+
+class SetupCompletionResponse(BaseModel):
+    success: bool
+    message: str
+    category: SetupCompletionErrorCategory | None = None
+    setup: SetupProgress
+    runtime_activation: Literal["restart_required"] | None = None
 
 
 class SetupAdministrator(BaseModel):

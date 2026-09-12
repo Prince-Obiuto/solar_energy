@@ -1,0 +1,15 @@
+# Defense for application-local contexts; Compose uses root /.dockerignore.
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.git
+coverage
+.vscode
+.idea
+*.log
+**/master.key
+**/*.runtime-key
+**/devices.json
+**/snapshot.json

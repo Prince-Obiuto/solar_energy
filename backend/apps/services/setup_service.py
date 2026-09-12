@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -155,10 +156,62 @@ class SetupService:
             raise SetupStateError("Setup authorization failed")
         return state
 
+    def complete(
+        self,
+        code: str,
+        *,
+        preflight: Callable[[], None],
+    ) -> InstallationStateRecord:
+        """Permanently close first-run setup after a local configuration preflight."""
+
+        with _SETUP_MUTATION_LOCK:
+            state = self._state(lock=True)
+            self._ensure_unlocked(state)
+            ready = all((
+                state.setup_initialized,
+                state.admin_configured,
+                state.beve_configured,
+                state.tuya_configured,
+                state.devices_verified,
+            ))
+            if not ready or not self._verify_state_code(state, code):
+                self._audit("Setup finalization authorization failed", severity="warning")
+                self.session.commit()
+                raise SetupStateError("Setup cannot be finalized")
+
+            preflight()
+            now = self.clock()
+            state.setup_completed = True
+            state.completed_at = now
+            state.runtime_activation_pending = True
+            state.runtime_activated_at = None
+            state.setup_token_hash = None
+            self._audit("Setup finalized")
+            self.session.commit()
+            self.session.refresh(state)
+            return state
+
+    def mark_runtime_activated(self) -> bool:
+        """Acknowledge a successfully constructed finalized production runtime."""
+
+        with _SETUP_MUTATION_LOCK:
+            state = self._state(lock=True)
+            if not state.setup_completed or not state.runtime_activation_pending:
+                return False
+            state.runtime_activation_pending = False
+            state.runtime_activated_at = self.clock()
+            self._audit("Runtime configuration activated")
+            self.session.commit()
+            return True
+
     def progress(self) -> dict[str, object]:
         state = self.get_state()
         if state.setup_completed:
-            return {"setup_required": False, "setup_completed": True}
+            return {
+                "setup_required": False,
+                "setup_completed": True,
+                "activation_required": state.runtime_activation_pending,
+            }
         if not state.setup_initialized:
             next_step = "initialize"
         elif not state.admin_configured:

@@ -45,3 +45,15 @@ dist-ssr
 *.runtime-key
 
 .venv/
+
+# Deployment configuration, credentials, backups and local Compose overrides
+/deployment/.env
+/deployment/secrets/
+/deployment/config/
+/deployment/backups/
+/deployment/compose.override.yaml
+/deployment/compose.override.yml
+**/postgres_password
+**/jwt_secret
+*.dump
+*.sql.gz

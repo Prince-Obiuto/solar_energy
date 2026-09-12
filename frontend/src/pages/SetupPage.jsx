@@ -8,6 +8,7 @@ import { APP_ROUTES } from "../app/router/routes";
 import AdministratorSetupStep from "../features/setup/components/AdministratorSetupStep";
 import BeveSetupStep from "../features/setup/components/BeveSetupStep";
 import SetupAuthorization from "../features/setup/components/SetupAuthorization";
+import SetupActivation from "../features/setup/components/SetupActivation";
 import SetupReview from "../features/setup/components/SetupReview";
 import SetupShell from "../features/setup/components/SetupShell";
 import TuyaSetupStep from "../features/setup/components/TuyaSetupStep";
@@ -44,6 +45,7 @@ export default function SetupPage() {
     );
   }
   if (!status?.setup_required) {
+    if (status?.activation_required) return <SetupActivation />;
     if (auth.status === "loading") return <div className="grid min-h-screen place-items-center"><Loader label="Opening application…" /></div>;
     return <Navigate replace to={auth.status === "authenticated" ? APP_ROUTES.dashboard : APP_ROUTES.login} />;
   }

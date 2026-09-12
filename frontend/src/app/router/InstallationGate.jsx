@@ -34,7 +34,7 @@ export default function InstallationGate() {
       </main>
     );
   }
-  if (status?.setup_required) {
+  if (status?.setup_required || status?.activation_required) {
     return <Navigate replace state={{ from: location.pathname }} to={APP_ROUTES.setup} />;
   }
   return <Outlet />;

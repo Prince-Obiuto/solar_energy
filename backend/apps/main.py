@@ -13,29 +13,69 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from apps.api.router import api_router
 from apps.core.config import settings
 from apps.core.logging import configure_logging
-from apps.core.runtime import build_application_runtime
+from apps.core.runtime import (
+    build_application_runtime,
+    configure_application_runtime,
+    get_application_runtime,
+)
+from apps.db.session import session_scope
 from apps.jobs.energy_collector import get_energy_collector
 from apps.jobs.health_monitor import health_monitor
 from apps.realtime.manager import connection_manager
+from apps.services.setup_service import SetupService
+
+
+logger = logging.getLogger(__name__)
+
+
+def _installation_runtime_state() -> tuple[bool, bool]:
+    with session_scope() as session:
+        state = SetupService(session).get_state()
+        return state.setup_completed, state.runtime_activation_pending
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Start and stop an optionally configured telemetry collector cleanly."""
 
-    if get_energy_collector() is None:
-        build_application_runtime()
+    finalized = False
+    activation_pending = False
+    runtime_build_failed = False
+    try:
+        finalized, activation_pending = _installation_runtime_state()
+    except Exception:
+        logger.error("Installation activation state could not be read")
+        runtime_build_failed = True
+
+    if get_application_runtime() is None and get_energy_collector() is None:
+        try:
+            build_application_runtime(
+                require_persisted_configuration=finalized,
+            )
+        except Exception:
+            configure_application_runtime(None)
+            runtime_build_failed = True
+            logger.error(
+                "Application runtime composition failed; installation activation remains pending"
+            )
     collector = get_energy_collector()
     await connection_manager.start()
     await health_monitor.start()
     if collector is not None:
         await collector.start()
+    if finalized and activation_pending and not runtime_build_failed:
+        try:
+            with session_scope() as session:
+                SetupService(session).mark_runtime_activated()
+        except Exception:
+            logger.error(
+                "Runtime activation acknowledgement failed; activation remains pending"
+            )
     try:
         yield
     finally:
         if collector is not None:
             await collector.stop()
-        from apps.core.runtime import get_application_runtime
         runtime = get_application_runtime()
         if runtime is not None:
             runtime.breaker_service.close()

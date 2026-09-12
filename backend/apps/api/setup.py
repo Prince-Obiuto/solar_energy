@@ -18,6 +18,7 @@ from apps.schemas.setup import (
     BeveVerificationResult,
     InitialAdministratorRequest,
     SetupCodeRequest,
+    SetupCompletionResponse,
     SetupProgress,
     SetupVerificationResponse,
     TuyaCloudDiscoveryResponse,
@@ -31,6 +32,10 @@ from apps.schemas.setup import (
 from apps.services.beve_setup_service import BeveSetupService
 from apps.services.runtime_configuration_service import RuntimeConfigurationService
 from apps.services.setup_service import SetupLockedError, SetupService, SetupStateError
+from apps.services.setup_finalization_service import (
+    SetupFinalizationService,
+    SetupPreflightError,
+)
 from apps.services.tuya_onboarding_store import TuyaOnboardingStore
 from apps.services.tuya_setup_service import TuyaScanInProgressError, TuyaSetupService
 
@@ -113,6 +118,51 @@ async def verify_setup_code(
     if valid:
         setup_limiter.reset(key)
     return SetupVerificationResponse(valid=valid)
+
+
+@router.post(
+    "/complete",
+    response_model=SetupCompletionResponse,
+    response_model_exclude_none=True,
+)
+def complete_setup(
+    payload: SetupCodeRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+    runtime_configuration: RuntimeConfigurationService = Depends(
+        get_runtime_configuration_service
+    ),
+) -> SetupCompletionResponse:
+    key = _rate_limit(request, "complete")
+    try:
+        SetupFinalizationService(
+            session,
+            runtime_configuration,
+        ).complete(payload.setup_code)
+    except SetupLockedError:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Installation setup is unavailable",
+        ) from None
+    except SetupStateError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Setup cannot be finalized",
+        ) from None
+    except SetupPreflightError as exc:
+        return SetupCompletionResponse(
+            success=False,
+            category=exc.category,
+            message=str(exc),
+            setup=SetupService(session).progress(),
+        )
+    setup_limiter.reset(key)
+    return SetupCompletionResponse(
+        success=True,
+        message="Setup finalized. Runtime activation requires a service restart.",
+        setup=SetupService(session).progress(),
+        runtime_activation="restart_required",
+    )
 
 
 @router.post(

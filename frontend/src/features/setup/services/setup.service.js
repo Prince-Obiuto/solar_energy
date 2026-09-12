@@ -15,6 +15,13 @@ const setupService = {
     return data;
   },
 
+  async completeSetup(setupCode) {
+    const { data } = await axiosClient.post("/setup/complete", {
+      setup_code: setupCode,
+    });
+    return data;
+  },
+
   async createAdministrator(setupCode, administrator) {
     const { data } = await axiosClient.post("/setup/administrator", {
       setup_code: setupCode,
