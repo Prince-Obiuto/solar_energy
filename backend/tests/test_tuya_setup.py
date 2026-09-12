@@ -157,10 +157,10 @@ class FakeLocalFactory:
 
 @pytest.fixture(autouse=True)
 def isolate_tuya_rate_limits():
-    for operation in ("tuya-cloud", "tuya-scan", "tuya-devices"):
+    for operation in ("tuya-cloud", "tuya-scan", "tuya-devices", "tuya-status"):
         setup_limiter.reset(f"{operation}:testclient")
     yield
-    for operation in ("tuya-cloud", "tuya-scan", "tuya-devices"):
+    for operation in ("tuya-cloud", "tuya-scan", "tuya-devices", "tuya-status"):
         setup_limiter.reset(f"{operation}:testclient")
 
 
@@ -782,6 +782,21 @@ def test_tuya_api_contract_is_secret_safe_and_stage_gated(tuya_setup_context) ->
         assert configured.status_code == 200
         assert configured.json()["setup"]["next_step"] == "confirm"
         assert LOCAL_KEY_ONE not in configured.text and "cloud-device-one" not in configured.text
+
+        safe_status = client.post(
+            "/api/v1/setup/tuya/status",
+            json={"setup_code": code},
+        )
+        assert safe_status.status_code == 200
+        assert safe_status.json() == {
+            "configured": True,
+            "devices_verified": True,
+            "configured_device_count": 1,
+            "devices": [{"friendly_name": "Library", "area": "Library"}],
+        }
+        assert LOCAL_KEY_ONE not in safe_status.text
+        assert "cloud-device-one" not in safe_status.text
+        assert "192.0.2.31" not in safe_status.text
 
         completed = client.post("/api/v1/setup/tuya/cloud", json=request)
         assert completed.status_code == 200

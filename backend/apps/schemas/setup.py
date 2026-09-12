@@ -214,3 +214,15 @@ class TuyaDeviceConfigurationResponse(BaseModel):
     devices: list[TuyaDeviceVerificationResponse] = Field(default_factory=list)
     setup: SetupProgress
     runtime_activation: Literal["restart_required"] | None = None
+
+
+class TuyaConfiguredDeviceSummary(BaseModel):
+    friendly_name: str
+    area: str
+
+
+class TuyaConfigurationStatusResponse(BaseModel):
+    configured: bool
+    devices_verified: bool
+    configured_device_count: int
+    devices: list[TuyaConfiguredDeviceSummary] = Field(default_factory=list)

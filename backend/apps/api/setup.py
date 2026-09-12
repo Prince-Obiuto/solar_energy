@@ -22,6 +22,7 @@ from apps.schemas.setup import (
     SetupVerificationResponse,
     TuyaCloudDiscoveryResponse,
     TuyaCloudSetupRequest,
+    TuyaConfigurationStatusResponse,
     TuyaDeviceConfigurationRequest,
     TuyaDeviceConfigurationResponse,
     TuyaOnboardingSessionRequest,
@@ -318,6 +319,45 @@ def scan_tuya_lan(
         ) from None
     if result.success:
         setup_limiter.reset(key)
+    return result
+
+
+@router.post("/tuya/status", response_model=TuyaConfigurationStatusResponse)
+def tuya_configuration_status(
+    payload: SetupCodeRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+    runtime_configuration: RuntimeConfigurationService = Depends(
+        get_runtime_configuration_service
+    ),
+    onboarding_store: TuyaOnboardingStore = Depends(get_tuya_onboarding_store),
+    cloud_gateway: TinyTuyaCloudGateway = Depends(get_tuya_cloud_gateway),
+    lan_discovery: TinyTuyaLanDiscovery = Depends(get_tuya_lan_discovery),
+    client_factory: Callable[[TuyaDeviceConfig], object] = Depends(
+        get_tuya_setup_client_factory
+    ),
+) -> TuyaConfigurationStatusResponse:
+    key = _rate_limit(request, "tuya-status")
+    try:
+        result = _tuya_setup_service(
+            session,
+            runtime_configuration,
+            onboarding_store,
+            cloud_gateway,
+            lan_discovery,
+            client_factory,
+        ).configuration_status(payload.setup_code)
+    except SetupLockedError:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Installation setup is unavailable",
+        ) from None
+    except SetupStateError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tuya setup authorization failed",
+        ) from None
+    setup_limiter.reset(key)
     return result
 
 

@@ -108,10 +108,24 @@ environment-driven recovery/headless administration option. Databases that
 already contain users are migrated with the administrator step marked configured;
 existing users and normal authentication are unchanged.
 
-The setup API exposes status, setup-code verification, the one-time administrator
-action, and the token-authorized BEVE stage described below. Tuya setup, device
-verification, completion gating, and the React setup wizard belong to later
-setup phases and are not implemented here.
+Open `/setup` in the React application and enter the one-time code. The wizard
+resumes from the backend's authoritative installation state and guides the
+operator through these stages:
+
+1. Create the initial administrator.
+2. Test and securely save the read-only BEVE/Siseli configuration.
+3. Use temporary Tuya Cloud credentials to retrieve candidates, scan the local
+   LAN, select breakers, assign friendly names/areas, and verify each device.
+4. Review the saved configuration and pending runtime activation.
+
+Setup codes, passwords, Tuya Cloud credentials, and opaque onboarding sessions
+remain only in browser memory and are not written to browser storage. Tuya Cloud
+credentials are used ephemerally and are not persisted by the backend. Closing
+or reloading the page discards temporary authorization and discovery state, but
+completed stages resume from the database after the operator re-enters the
+setup code. Saved hardware configuration becomes active after final setup and a
+backend restart. The final completion/lock action is intentionally reserved for
+the next installation phase.
 
 ### Runtime configuration master key
 

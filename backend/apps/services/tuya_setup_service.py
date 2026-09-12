@@ -39,6 +39,8 @@ from apps.schemas.setup import (
     TuyaCloudCandidateResponse,
     TuyaCloudDiscoveryResponse,
     TuyaCloudSetupRequest,
+    TuyaConfigurationStatusResponse,
+    TuyaConfiguredDeviceSummary,
     TuyaDeviceConfigurationRequest,
     TuyaDeviceConfigurationResponse,
     TuyaDeviceVerificationResponse,
@@ -219,6 +221,25 @@ class TuyaSetupService:
             return response
         finally:
             _TUYA_SCAN_LOCK.release()
+
+    def configuration_status(self, setup_code: str) -> TuyaConfigurationStatusResponse:
+        """Return only setup-safe persisted device metadata without hardware I/O."""
+
+        state = SetupService(self.session).authorize_tuya_stage(setup_code)
+        document = self.runtime_configuration.get_tuya_device_configuration() or []
+        devices = [
+            TuyaConfiguredDeviceSummary(
+                friendly_name=item["name"],
+                area=item["area"],
+            )
+            for item in document
+        ]
+        return TuyaConfigurationStatusResponse(
+            configured=state.tuya_configured,
+            devices_verified=state.devices_verified,
+            configured_device_count=len(devices),
+            devices=devices,
+        )
 
     def configure_devices(
         self,
