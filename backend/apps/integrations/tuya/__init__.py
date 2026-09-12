@@ -12,6 +12,13 @@ from .client import (
     TuyaTimeoutError,
 )
 from .mapper import normalize_tuya_breaker_state
+from .onboarding import (
+    TinyTuyaCloudGateway,
+    TinyTuyaLanDiscovery,
+    TuyaCloudConfig,
+    TuyaCloudDevice,
+    TuyaLanDevice,
+)
 
 __all__ = [
     "TuyaBreakerAdapter",
@@ -23,5 +30,10 @@ __all__ = [
     "TuyaMalformedResponseError",
     "TuyaOfflineError",
     "TuyaTimeoutError",
+    "TinyTuyaCloudGateway",
+    "TinyTuyaLanDiscovery",
+    "TuyaCloudConfig",
+    "TuyaCloudDevice",
+    "TuyaLanDevice",
     "normalize_tuya_breaker_state",
 ]

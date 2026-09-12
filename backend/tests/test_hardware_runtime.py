@@ -188,6 +188,111 @@ def test_runtime_uses_persisted_beve_configuration_after_restart(tmp_path):
         engine.dispose()
 
 
+def test_runtime_prefers_encrypted_persisted_tuya_devices_over_file(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'persisted-tuya-runtime.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    key_file = tmp_path / "master.key"
+    initialize_runtime_master_key(key_file)
+    config = Settings(
+        _env_file=None,
+        app_env="test",
+        runtime_master_key_file=key_file,
+        tuya_device_file=write_devices(tmp_path, device_entries(1)),
+        beve_username=None,
+        beve_password=None,
+        beve_station_id=None,
+        beve_device_id=None,
+    )
+    with sessions() as session:
+        RuntimeConfigurationService(
+            session, environment=config, master_key_file=str(key_file)
+        ).set_tuya_device_configuration([{
+            "id": "persisted-device",
+            "name": "Persisted breaker",
+            "area": "Persisted area",
+            "key": "persisted-local-key-not-real",
+            "ip": "192.0.2.80",
+            "version": "3.5",
+        }])
+        session.commit()
+    try:
+        runtime = build_application_runtime(
+            config,
+            tuya_client_factory=FakeTuyaClient,
+            session_factory=sessions,
+            provision=False,
+        )
+        assert runtime.breaker_service.registered_breaker_ids == ("persisted-device",)
+        registration = runtime.breaker_service.get_registration("persisted-device")
+        assert registration.client.config.friendly_name == "Persisted breaker"
+    finally:
+        configure_application_runtime(None)
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_runtime_keeps_devices_file_fallback_when_no_persisted_devices(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'tuya-file-fallback.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    key_file = tmp_path / "master.key"
+    initialize_runtime_master_key(key_file)
+    config = Settings(
+        _env_file=None,
+        app_env="test",
+        runtime_master_key_file=key_file,
+        tuya_device_file=write_devices(tmp_path, device_entries(1)),
+        beve_username=None,
+        beve_password=None,
+        beve_station_id=None,
+        beve_device_id=None,
+    )
+    try:
+        runtime = build_application_runtime(
+            config,
+            beve_client_factory=FakeBeveClient,
+            tuya_client_factory=FakeTuyaClient,
+            session_factory=sessions,
+            provision=False,
+        )
+        assert runtime.breaker_service.registered_breaker_ids == ("device-0",)
+    finally:
+        configure_application_runtime(None)
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_runtime_keeps_devices_file_fallback_when_no_persisted_tuya_devices(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'file-tuya-runtime.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    key_file = tmp_path / "master.key"
+    initialize_runtime_master_key(key_file)
+    config = Settings(
+        _env_file=None,
+        app_env="test",
+        runtime_master_key_file=key_file,
+        tuya_device_file=write_devices(tmp_path, device_entries(1)),
+        beve_username=None,
+        beve_password=None,
+        beve_station_id=None,
+        beve_device_id=None,
+    )
+    try:
+        runtime = build_application_runtime(
+            config,
+            tuya_client_factory=FakeTuyaClient,
+            session_factory=sessions,
+            provision=False,
+        )
+        assert runtime.breaker_service.registered_breaker_ids == ("device-0",)
+    finally:
+        configure_application_runtime(None)
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
 def test_provisioning_is_idempotent_preserves_custom_metadata_and_enables_persistence(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'runtime.db'}")
     Base.metadata.create_all(engine)

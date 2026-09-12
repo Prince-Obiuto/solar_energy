@@ -40,12 +40,51 @@ def load_breaker_registrations(
         document = json.loads(device_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TuyaConfigurationError("Tuya device file cannot be loaded") from None
-    entries = _entries(document)
-    registrations: list[BreakerRegistration] = []
+    return load_breaker_registrations_from_document(
+        document,
+        client_factory=client_factory,
+        require_supported_metadata=True,
+        strict=False,
+    )
+
+
+def load_breaker_registrations_from_document(
+    document: Any,
+    *,
+    client_factory: Callable[[TuyaDeviceConfig], Any] = TuyaClient,
+    require_supported_metadata: bool = False,
+    strict: bool = True,
+) -> list[BreakerRegistration]:
+    """Build registrations from an internal document without touching a file."""
+
+    configs = parse_breaker_configs(
+        _entries(document),
+        require_supported_metadata=require_supported_metadata,
+        strict=strict,
+    )
+    return [
+        BreakerRegistration(client=client_factory(config), capabilities=_capabilities())
+        for config in configs
+    ]
+
+
+def parse_breaker_configs(
+    entries: list[Any],
+    *,
+    require_supported_metadata: bool,
+    strict: bool,
+) -> list[TuyaDeviceConfig]:
+    """Validate file/onboarding entries while preserving the existing shape."""
+
+    configs: list[TuyaDeviceConfig] = []
     seen: set[str] = set()
     skipped = 0
     for entry in entries:
-        if not isinstance(entry, Mapping) or not _supported(entry):
+        if not isinstance(entry, Mapping) or (
+            require_supported_metadata and not _supported(entry)
+        ):
+            if strict:
+                raise TuyaConfigurationError("Tuya device configuration is invalid")
             skipped += 1
             continue
         try:
@@ -59,24 +98,33 @@ def load_breaker_registrations(
                 enabled=entry.get("enabled", True),
             )
         except ValidationError:
+            if strict:
+                raise TuyaConfigurationError("Tuya device configuration is invalid") from None
             skipped += 1
             continue
         if config.device_id in seen:
+            if strict:
+                raise TuyaConfigurationError("Tuya device configuration contains duplicates")
             skipped += 1
             continue
         seen.add(config.device_id)
-        registrations.append(BreakerRegistration(
-            client=client_factory(config),
-            capabilities=DeviceCapability(
-                switching=True, instantaneous_power=True, voltage=True,
-                current=True, energy_total=True, countdown=True,
-                remote_configuration=True,
-            ),
-        ))
-    logger.info("Loaded %d supported Tuya breakers", len(registrations))
+        configs.append(config)
+    logger.info("Loaded %d supported Tuya breakers", len(configs))
     if skipped:
         logger.warning("Skipped %d unsupported or incomplete Tuya entries", skipped)
-    return registrations
+    return configs
+
+
+def _capabilities() -> DeviceCapability:
+    return DeviceCapability(
+        switching=True,
+        instantaneous_power=True,
+        voltage=True,
+        current=True,
+        energy_total=True,
+        countdown=True,
+        remote_configuration=True,
+    )
 
 
 def _entries(document: Any) -> list[Any]:

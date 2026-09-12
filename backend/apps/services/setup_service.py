@@ -138,6 +138,23 @@ class SetupService:
             raise SetupStateError("Setup authorization failed")
         return state
 
+    def authorize_tuya_stage(self, code: str) -> InstallationStateRecord:
+        """Authorize Tuya onboarding only after verified BEVE configuration."""
+
+        state = self._state(lock=True)
+        self._reconcile_existing_users(state)
+        self._ensure_unlocked(state)
+        eligible = (
+            state.setup_initialized
+            and state.admin_configured
+            and state.beve_configured
+        )
+        if not eligible or not self._verify_state_code(state, code):
+            self._audit("Tuya setup authorization failed", severity="warning")
+            self.session.commit()
+            raise SetupStateError("Setup authorization failed")
+        return state
+
     def progress(self) -> dict[str, object]:
         state = self.get_state()
         if state.setup_completed:

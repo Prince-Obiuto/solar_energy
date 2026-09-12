@@ -90,7 +90,15 @@ async def harden_http(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith(f"{settings.api_v1_prefix}/auth") else response.headers.get("Cache-Control", "no-cache")
+    sensitive_prefixes = (
+        f"{settings.api_v1_prefix}/auth",
+        f"{settings.api_v1_prefix}/setup",
+    )
+    response.headers["Cache-Control"] = (
+        "no-store"
+        if request.url.path.startswith(sensitive_prefixes)
+        else response.headers.get("Cache-Control", "no-cache")
+    )
     request_logger.info(
         "request method=%s path=%s status=%s duration_ms=%.1f",
         request.method,

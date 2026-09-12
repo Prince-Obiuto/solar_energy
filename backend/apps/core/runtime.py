@@ -67,7 +67,6 @@ def build_application_runtime(
 
     from apps.integrations.inverter import BeveClient
     from apps.integrations.tuya.client import TuyaClient
-    from apps.integrations.tuya.device_loader import load_breaker_registrations
     from apps.jobs.energy_collector import EnergyCollector, SQLAlchemyTelemetryPersistence
     from apps.services.breaker_service import BreakerService
     from apps.services.device_service import DeviceService
@@ -82,7 +81,11 @@ def build_application_runtime(
             socket_timeout_seconds=config.tuya_socket_timeout_seconds,
             retry_delay_seconds=config.telemetry_retry_delay_seconds,
         )
-    registrations = load_breaker_registrations(config.tuya_device_file, client_factory=tuya_client_factory)
+    registrations = _resolved_tuya_registrations(
+        config,
+        session_factory,
+        client_factory=tuya_client_factory,
+    )
     beve_config = _resolved_beve_config(config, session_factory)
     inverter_reference = beve_config.device_id if beve_config else None
     if provision and (inverter_reference or registrations):
@@ -231,4 +234,38 @@ def _resolved_beve_config(
         device_id=resolved.device_id,
         time_zone=resolved.time_zone,
         timeout_seconds=resolved.timeout_seconds,
+    )
+
+
+def _resolved_tuya_registrations(
+    config: Settings,
+    session_factory: sessionmaker[Session],
+    *,
+    client_factory: Callable[[Any], object],
+) -> list[BreakerRegistration]:
+    """Prefer encrypted persisted devices, then retain devices.json fallback."""
+
+    from apps.integrations.tuya.device_loader import (
+        load_breaker_registrations,
+        load_breaker_registrations_from_document,
+    )
+
+    if config.runtime_master_key_path is not None:
+        from apps.services.runtime_configuration_service import RuntimeConfigurationService
+
+        with session_factory() as session:
+            document = RuntimeConfigurationService(
+                session,
+                environment=config,
+            ).get_tuya_device_configuration()
+        if document is not None:
+            return load_breaker_registrations_from_document(
+                document,
+                client_factory=client_factory,
+                require_supported_metadata=False,
+                strict=True,
+            )
+    return load_breaker_registrations(
+        config.tuya_device_file,
+        client_factory=client_factory,
     )

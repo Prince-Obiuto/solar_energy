@@ -168,8 +168,10 @@ Backend variables are documented with safe placeholders in
 - BEVE/Siseli: username, password, station/device identifiers, time zone and
   timeout. The `siseli` package owns vendor authentication and request signing;
   application IDs/secrets are not application configuration.
-- TinyTuya: `TUYA_DEVICE_FILE`, local socket timeout, polling interval and
-  control verification delay. Secrets remain in the wizard-generated file.
+- TinyTuya: `TUYA_DEVICE_FILE`, local socket timeout, polling interval, control
+  verification delay, onboarding-session TTL/count, and bounded scan retry.
+  Production onboarding encrypts the selected local-device document; the
+  ignored wizard-generated file remains a development fallback.
 - Collection: independent BEVE/Tuya intervals, persistence interval, retry,
   stale, WebSocket and health-monitor timings. `ENERGY_MAX_INTEGRATION_GAP_SECONDS`
   bounds output-power integration so missing cloud intervals are not treated as
@@ -197,6 +199,8 @@ keys—cannot be written through the service as plaintext. Configuration changes
 create `installation.configuration` audit events containing only namespace,
 changed key name, action, secret classification, and optional actor identifier.
 Values and ciphertext are excluded.
+The Tuya Cloud namespace remains available to the generic configuration layer,
+but first-run onboarding deliberately writes no Cloud credential rows.
 
 Telemetry tables have device/timestamp and timestamp indexes. Device, alert,
 event, user, control request, and backup status/time access paths have dedicated
@@ -281,41 +285,73 @@ verification.
 ## 10. Tuya breaker configuration
 
 The verified device is WIFl Smart Meter Pro / TMPH, category `znjdq`, protocol
-3.5. Run the TinyTuya wizard on the backend host to produce `devices.json`, then
-set `TUYA_DEVICE_FILE` if it is not at `backend/devices.json`. At startup the
-application loads every valid TMPH entry, constructs an independent local-LAN
-client and breaker registration for each, and starts an independent collector
-loop. The list is variable-length; adding a supported breaker requires a wizard
-entry, not a Python change.
+3.5. First-run onboarding uses TinyTuya 1.20.0's Python APIs directly; it never
+spawns or parses the TinyTuya CLI. `POST /api/v1/setup/tuya/cloud` accepts the
+setup code, region, Access ID, Access Secret, and optional anchor Device ID. It
+calls `Cloud.getdevices()` and immediately clears/discards the Cloud object's
+credentials after extracting device IDs and local keys into a bounded,
+process-local onboarding session. Cloud credentials, tokens, raw responses, and
+local keys are never returned or persisted.
+
+The opaque onboarding session lasts 15 minutes by default and is bounded to 10
+concurrent sessions. `POST /api/v1/setup/tuya/scan` explicitly invokes
+`deviceScan(..., poll=False, byID=True)` with a bounded scan duration. Cloud and
+LAN records are matched only by exact Tuya Device ID. An unmatched cloud device
+gets at most one bounded `find_device(dev_id=...)` fallback attempt; names and IP
+addresses are never identities. Concurrent scans are rejected rather than
+overlapped.
+
+`POST /api/v1/setup/tuya/devices` accepts one or more opaque candidate refs with
+operator-assigned friendly names and areas. Each selection must have a cloud
+local key, a discovered LAN address, and a reported protocol version. The same
+production `TuyaClient`, `TuyaBreakerAdapter`, and mapper then perform a status
+read. Relay ON, relay OFF, and legitimate zero telemetry all pass; the setup
+path exposes no switching or datapoint-write call.
+
+After every selection verifies, the complete local-device document is encrypted
+as one `tuya_devices/devices` runtime setting. A savepoint protects any previous
+known-good document during persistence/read-back validation. Only then are
+`tuya_configured` and `devices_verified` set, advancing setup to `confirm`. The
+opaque session is destroyed immediately. Runtime activation is restart-based so
+the application creates only its normal single collector.
+
+At startup encrypted persisted devices take precedence. If no persisted device
+document exists, `TUYA_DEVICE_FILE`/`devices.json` remains the development and
+backward-compatible fallback and is never migrated automatically. Every valid
+entry constructs an independent local-LAN client and breaker registration.
 
 `devices.json` contains local keys. It, `snapshot.json`, `tinytuya.json`,
 `tuya-raw.json`, and `.env` are recursively ignored and must never be committed,
 logged, returned by REST, or published by WebSocket. Normal monitoring uses only
 local TinyTuya communication and does not consume `tinytuya.json` cloud
-credentials. Configure DHCP reservations/static leases for deployed breakers;
-the saved IP is used directly and the backend does not scan the LAN on every
-poll.
+credentials. Configure DHCP reservations/static leases for deployed breakers.
+The setup IP is an initial address, not identity; the existing client can recover
+a changed address by exact Device ID after a failed connection and never scans
+continuously.
 
 Only verified control DPs 1, 9, 38, 40 and 41 are allowlisted. Calibration DPs
 22–25 and unknown DPs 21, 26 and 42 cannot be written through the adapter.
 
 ## 11. Device onboarding
 
-1. Run the TinyTuya wizard and confirm the local IP, protocol and TMPH identity.
-2. Keep its generated files readable only by the backend service account.
-3. Start the application. Missing Area and Device rows are provisioned
+1. Enter Tuya Cloud credentials locally during the token-protected setup flow.
+2. Run the explicit LAN scan and select only exact-ID matched breaker candidates.
+3. Assign printable friendly names/areas and complete read-only local verification.
+4. Restart the backend after encrypted persistence. Missing Area and Device rows are provisioned
    transactionally and idempotently before collection starts.
-4. Customize friendly names/areas in the database if required; existing values
+5. Customize friendly names/areas in the database if required; existing values
    are preferred on subsequent starts and are not overwritten.
-5. Verify normalized read-only telemetry before exercising ADMIN controls.
-6. Test read-back verification and audit persistence under supervision.
+6. Test read-back verification and audit persistence under supervision before
+   exercising ADMIN controls.
 
 FastAPI lifespan composes the resolved read-only BEVE client, every
 configured TinyTuya breaker, normalized services, persistence adapter, event
 publisher and collector. Development can start without hardware configuration;
 partially supplied BEVE settings fail with a sanitized configuration error.
 
-The runtime-configuration provider resolves typed BEVE values with
+The runtime-configuration provider resolves typed BEVE values and the encrypted
+Tuya device document. Persisted Tuya devices override `devices.json`; when no
+persisted document exists the file remains the fallback. BEVE fields retain
 per-field `persisted`, `environment`, or `missing` source metadata. A persisted
 value wins; an absent row falls back to the existing environment setting. A
 persisted encrypted row that cannot be decrypted fails explicitly and never
@@ -336,8 +372,9 @@ debounced/coalesced so bursts result in at most one request in flight.
 Public: `GET /`, `GET /health`, `GET /api/v1/health`, `POST /auth/login`,
 `POST /auth/logout`, `GET /setup/status`, `POST /setup/verify`, and the
 one-time-token-protected `POST /setup/administrator`, `POST /setup/beve/test`,
-and `POST /setup/beve` under `/api/v1`. BEVE setup mutations additionally
-require the initialized, admin-configured, incomplete setup stage.
+`POST /setup/beve`, `POST /setup/tuya/cloud`, `POST /setup/tuya/scan`, and
+`POST /setup/tuya/devices` under `/api/v1`. Tuya setup additionally requires an
+initialized, admin-configured, BEVE-configured, incomplete installation.
 
 Authenticated routes under `/api/v1`:
 
@@ -495,7 +532,6 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 
 ## 21. Known limitations
 
-- No REST device/area onboarding endpoint exists.
 - The frontend custom report date picker is not connected.
 - The settings UI is read-only because no settings mutation API exists.
 - Login limiting is process-local; multi-worker deployments need a shared edge
@@ -504,6 +540,9 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
   enforce body and connection limits.
 - No automated frontend unit-test script is currently defined.
 - BEVE setup activation is restart-based; no live collector hot-swap is exposed.
+- Tuya onboarding sessions are process-local; keep setup traffic on one backend
+  instance. A later container deployment must retain host-LAN UDP discovery and
+  local breaker connectivity.
 
 ## 22. Hardware-specific TODOs
 
@@ -513,7 +552,7 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
   offices breakers before operational use.
 - Verify BEVE session behavior, mapping, station/device selection, and time-zone
   handling against the deployed FiveStar inverter after vendor changes.
-- Implement the scoped Tuya cloud/device onboarding stages without exposing
-  local keys or vendor credentials.
+- Run Tuya onboarding against the department account/LAN and verify all intended
+  breakers are exact-ID matches before Phase 5 UI work.
 - Test network loss/recovery, stale thresholds, and polling rates on the actual
   department LAN without hammering either hardware source.

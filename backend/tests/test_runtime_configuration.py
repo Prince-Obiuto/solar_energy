@@ -86,6 +86,7 @@ def test_namespace_key_is_unique_and_write_updates_existing(runtime_context) -> 
         ("beve", "password"),
         ("tuya_cloud", "access_id"),
         ("tuya_cloud", "access_secret"),
+        ("tuya_devices", "devices"),
         ("tuya_devices", "device-1.local_key"),
     ],
 )

@@ -12,6 +12,6 @@ websockets
 python-multipart
 pytest
 pytest-asyncio
-tinytuya
+tinytuya==1.20.0
 requests
 pycryptodome

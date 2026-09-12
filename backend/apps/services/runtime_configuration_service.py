@@ -17,6 +17,9 @@ from apps.models.persistence import RuntimeConfigurationRecord, SystemEventRecor
 from apps.security.runtime_secrets import RuntimeMasterKeyMissingError, RuntimeSecretCipher
 
 
+TUYA_DEVICE_CONFIGURATION_KEY = "devices"
+
+
 class RuntimeConfigurationError(RuntimeError):
     """Base class for safe runtime-configuration errors."""
 
@@ -121,7 +124,9 @@ def is_secret_configuration_key(
     if segments & _SECRET_TERMS:
         return True
     return normalized_namespace == RuntimeConfigurationNamespace.TUYA_DEVICES and (
-        normalized_key.endswith("_local_key") or normalized_key.endswith("_secret")
+        normalized_key == TUYA_DEVICE_CONFIGURATION_KEY
+        or normalized_key.endswith("_local_key")
+        or normalized_key.endswith("_secret")
     )
 
 
@@ -287,6 +292,49 @@ class RuntimeConfigurationService:
             resolved[key] = value
         return BeveRuntimeConfiguration(**resolved, sources=sources)
 
+    def set_tuya_device_configuration(
+        self,
+        devices: list[dict[str, Any]],
+        *,
+        actor_id: uuid.UUID | str | None = None,
+    ) -> RuntimeConfigurationRecord:
+        """Encrypt one complete, validated local-device configuration document."""
+
+        normalized = _normalize_tuya_devices(devices)
+        serialized = json.dumps(normalized, allow_nan=False, separators=(",", ":"))
+        return self.set_secret(
+            RuntimeConfigurationNamespace.TUYA_DEVICES,
+            TUYA_DEVICE_CONFIGURATION_KEY,
+            serialized,
+            actor_id=actor_id,
+        )
+
+    def get_tuya_device_configuration(self) -> list[dict[str, Any]] | None:
+        """Decrypt and validate persisted local devices for internal consumers."""
+
+        serialized = self.get_setting(
+            RuntimeConfigurationNamespace.TUYA_DEVICES,
+            TUYA_DEVICE_CONFIGURATION_KEY,
+        )
+        if serialized is None:
+            return None
+        if not isinstance(serialized, str):
+            raise RuntimeConfigurationValueError(
+                "Persisted Tuya device configuration is invalid"
+            )
+        try:
+            document = json.loads(serialized)
+        except json.JSONDecodeError:
+            raise RuntimeConfigurationValueError(
+                "Persisted Tuya device configuration is invalid"
+            ) from None
+        try:
+            return _normalize_tuya_devices(document)
+        except RuntimeConfigurationValidationError:
+            raise RuntimeConfigurationValueError(
+                "Persisted Tuya device configuration is invalid"
+            ) from None
+
     def _beve_environment_values(self) -> dict[str, Any]:
         return {
             "base_url": self.environment.beve_base_url,
@@ -435,6 +483,63 @@ def _is_missing(value: Any) -> bool:
     return isinstance(value, str) and value == ""
 
 
+def _normalize_tuya_devices(document: Any) -> list[dict[str, Any]]:
+    """Return a bounded wizard-compatible document with no cloud credentials."""
+
+    from apps.integrations.tuya.client import TuyaDeviceConfig
+
+    if not isinstance(document, list) or not 1 <= len(document) <= 100:
+        raise RuntimeConfigurationValidationError(
+            "Tuya device configuration must contain between 1 and 100 devices"
+        )
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in document:
+        if not isinstance(item, dict):
+            raise RuntimeConfigurationValidationError(
+                "Tuya device configuration is invalid"
+            )
+        forbidden = {"access_id", "access_secret", "api_key", "api_secret", "token"}
+        if forbidden.intersection(item):
+            raise RuntimeConfigurationValidationError(
+                "Cloud credentials cannot be stored with Tuya devices"
+            )
+        try:
+            config = TuyaDeviceConfig(
+                device_id=item.get("id"),
+                friendly_name=item.get("name"),
+                area=item.get("area"),
+                local_key=item.get("key"),
+                ip_address=item.get("ip"),
+                protocol_version=str(item.get("version")),
+                enabled=item.get("enabled", True),
+            )
+        except Exception:
+            raise RuntimeConfigurationValidationError(
+                "Tuya device configuration is invalid"
+            ) from None
+        if config.device_id in seen:
+            raise RuntimeConfigurationValidationError(
+                "Tuya device configuration contains duplicate devices"
+            )
+        seen.add(config.device_id)
+        entry: dict[str, Any] = {
+            "id": config.device_id,
+            "name": config.friendly_name,
+            "area": config.area,
+            "key": config.local_key.get_secret_value(),
+            "ip": str(config.ip_address),
+            "version": config.protocol_version,
+            "enabled": config.enabled,
+        }
+        for metadata_key in ("product_id", "category", "model"):
+            value = item.get(metadata_key)
+            if isinstance(value, str) and value.strip():
+                entry[metadata_key] = value.strip()[:255]
+        normalized.append(entry)
+    return normalized
+
+
 __all__ = [
     "BeveRuntimeConfiguration",
     "ConfigurationFieldMetadata",
@@ -446,5 +551,6 @@ __all__ = [
     "RuntimeConfigurationValidationError",
     "RuntimeConfigurationValueError",
     "RuntimeSecretClassificationError",
+    "TUYA_DEVICE_CONFIGURATION_KEY",
     "is_secret_configuration_key",
 ]

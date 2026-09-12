@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Literal
 
+import unicodedata
+
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 
@@ -102,3 +104,113 @@ class BeveConfigurationResponse(BaseModel):
     verification: BeveVerificationResult
     setup: SetupProgress
     runtime_activation: Literal["restart_required"] = "restart_required"
+
+
+TuyaSetupErrorCategory = Literal[
+    "cloud_authentication_failed",
+    "cloud_device_fetch_failed",
+    "cloud_configuration_invalid",
+    "network_error",
+    "timeout",
+    "cloud_malformed_response",
+    "scan_timeout",
+    "no_devices_found",
+    "onboarding_session_invalid",
+    "device_not_on_lan",
+    "device_id_mismatch",
+    "local_connection_failed",
+    "protocol_error",
+    "malformed_response",
+    "unsupported_device",
+    "configuration_invalid",
+]
+
+
+class TuyaCloudSetupRequest(SetupCodeRequest):
+    region: str = Field(min_length=1, max_length=10)
+    access_id: SecretStr = Field(min_length=1, max_length=255)
+    access_secret: SecretStr = Field(min_length=1, max_length=1024)
+    anchor_device_id: SecretStr | None = None
+
+
+class TuyaCloudCandidateResponse(BaseModel):
+    device_ref: str
+    name: str | None = None
+    product_id: str | None = None
+    category: str | None = None
+    model: str | None = None
+    online: bool | None = None
+    local_configuration_available: bool
+
+
+class TuyaCloudDiscoveryResponse(BaseModel):
+    success: bool
+    category: TuyaSetupErrorCategory | None = None
+    message: str
+    onboarding_session: str | None = None
+    devices: list[TuyaCloudCandidateResponse] = Field(default_factory=list)
+
+
+class TuyaOnboardingSessionRequest(SetupCodeRequest):
+    onboarding_session: SecretStr = Field(min_length=32, max_length=256)
+
+
+class TuyaMatchedDeviceResponse(BaseModel):
+    device_ref: str
+    name: str | None = None
+    ip_address: str
+    protocol_version: str | None = None
+    product_id: str | None = None
+    compatible: bool | None = None
+    local_configuration_available: bool
+
+
+class TuyaScanResponse(BaseModel):
+    success: bool
+    category: TuyaSetupErrorCategory | None = None
+    message: str
+    matched: list[TuyaMatchedDeviceResponse] = Field(default_factory=list)
+    cloud_only: list[str] = Field(default_factory=list)
+    lan_only_count: int = 0
+
+
+class TuyaDeviceSelection(BaseModel):
+    device_ref: str = Field(min_length=16, max_length=256)
+    friendly_name: str = Field(min_length=1, max_length=120)
+    area: str = Field(min_length=1, max_length=120)
+
+    @field_validator("friendly_name", "area")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(unicodedata.category(character) == "Cc" for character in normalized):
+            raise ValueError("Name and area must be printable text")
+        return normalized
+
+
+class TuyaDeviceConfigurationRequest(TuyaOnboardingSessionRequest):
+    devices: list[TuyaDeviceSelection] = Field(min_length=1, max_length=100)
+
+
+class TuyaDeviceVerificationResponse(BaseModel):
+    device_ref: str
+    friendly_name: str
+    area: str
+    verified: bool
+    connectivity: Literal["online", "unavailable"]
+    relay_state: bool | None = None
+    voltage_v: float | None = None
+    current_a: float | None = None
+    power_w: float | None = None
+    protocol_version: str | None = None
+    category: TuyaSetupErrorCategory | None = None
+    message: str | None = None
+
+
+class TuyaDeviceConfigurationResponse(BaseModel):
+    success: bool
+    category: TuyaSetupErrorCategory | None = None
+    message: str
+    devices: list[TuyaDeviceVerificationResponse] = Field(default_factory=list)
+    setup: SetupProgress
+    runtime_activation: Literal["restart_required"] | None = None
