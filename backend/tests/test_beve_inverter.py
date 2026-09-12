@@ -8,7 +8,7 @@ import requests
 
 from apps.integrations.inverter import (
     BeveAuthenticationError, BeveClient, BeveCloudError, BeveConfig,
-    BeveConnectionError, BeveIncompleteResponseError, BeveMalformedResponseError,
+    BeveConnectionError, BeveDeviceNotFoundError, BeveIncompleteResponseError, BeveMalformedResponseError,
     BeveTimeoutError, InverterAdapter, MockBeveClient,
 )
 from apps.integrations.inverter.client import _solar_api_factory
@@ -115,6 +115,13 @@ def test_successful_telemetry_read_uses_verified_endpoint(beve_config) -> None:
 def test_fetch_device_uses_siseli_list_devices(beve_config) -> None:
     api = FakeSolarOfThingsAPI(devices=[{"id": "other"}, {"id": "test-device", "name": "Inverter"}])
     assert BeveClient(beve_config, api=api).fetch_device()["name"] == "Inverter"
+    assert api.station_calls == ["test-station"]
+
+
+def test_fetch_device_rejects_wrong_station_or_device_selection(beve_config) -> None:
+    api = FakeSolarOfThingsAPI(devices=[{"id": "different-device"}])
+    with pytest.raises(BeveDeviceNotFoundError):
+        BeveClient(beve_config, api=api).fetch_device()
     assert api.station_calls == ["test-station"]
 
 

@@ -19,6 +19,8 @@ from apps.integrations.tuya.adapter import TuyaBreakerAdapter
 from apps.integrations.tuya.device_loader import load_breaker_registrations
 from apps.jobs.energy_collector import SQLAlchemyTelemetryPersistence
 from apps.models.persistence import AreaRecord, BreakerReadingRecord, DeviceRecord
+from apps.security.runtime_secrets import initialize_runtime_master_key
+from apps.services.runtime_configuration_service import RuntimeConfigurationService
 from apps.services.breaker_service import BreakerService
 
 
@@ -134,6 +136,56 @@ def test_runtime_composes_beve_three_breakers_and_collector(tmp_path):
         assert runtime.inverter_device_reference == "inverter"
     finally:
         configure_application_runtime(None)
+
+
+def test_runtime_uses_persisted_beve_configuration_after_restart(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'persistent-runtime.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    key_file = tmp_path / "master.key"
+    initialize_runtime_master_key(key_file)
+    config = Settings(
+        _env_file=None,
+        app_env="test",
+        runtime_master_key_file=key_file,
+        tuya_device_file=tmp_path / "no-devices.json",
+        beve_username="environment-user",
+        beve_password="environment-password",
+        beve_station_id="environment-station",
+        beve_device_id="environment-device",
+    )
+    with sessions() as session:
+        runtime_configuration = RuntimeConfigurationService(
+            session, environment=config, master_key_file=str(key_file)
+        )
+        runtime_configuration.set_secret("beve", "username", "persisted-user")
+        runtime_configuration.set_secret("beve", "password", "persisted-password")
+        runtime_configuration.set_non_secret("beve", "station_id", "persisted-station")
+        runtime_configuration.set_non_secret("beve", "device_id", "persisted-device")
+        session.commit()
+
+    captured = []
+
+    def beve_factory(beve_config):
+        captured.append(beve_config)
+        return FakeBeveClient(beve_config)
+
+    try:
+        runtime = build_application_runtime(
+            config,
+            beve_client_factory=beve_factory,
+            tuya_client_factory=FakeTuyaClient,
+            session_factory=sessions,
+            provision=False,
+        )
+        assert runtime.inverter_device_reference == "persisted-device"
+        assert captured[0].username.get_secret_value() == "persisted-user"
+        assert captured[0].password.get_secret_value() == "persisted-password"
+        assert captured[0].station_id == "persisted-station"
+    finally:
+        configure_application_runtime(None)
+        Base.metadata.drop_all(engine)
+        engine.dispose()
 
 
 def test_provisioning_is_idempotent_preserves_custom_metadata_and_enables_persistence(tmp_path):

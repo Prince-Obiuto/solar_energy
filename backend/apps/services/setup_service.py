@@ -125,6 +125,19 @@ class SetupService:
             self.session.refresh(user)
             return user
 
+    def authorize_beve_stage(self, code: str) -> InstallationStateRecord:
+        """Authorize the token-driven BEVE setup stage and lock its state row."""
+
+        state = self._state(lock=True)
+        self._reconcile_existing_users(state)
+        self._ensure_unlocked(state)
+        eligible = state.setup_initialized and state.admin_configured
+        if not eligible or not self._verify_state_code(state, code):
+            self._audit("BEVE setup authorization failed", severity="warning")
+            self.session.commit()
+            raise SetupStateError("Setup authorization failed")
+        return state
+
     def progress(self) -> dict[str, object]:
         state = self.get_state()
         if state.setup_completed:

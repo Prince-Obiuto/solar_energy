@@ -83,7 +83,7 @@ def build_application_runtime(
             retry_delay_seconds=config.telemetry_retry_delay_seconds,
         )
     registrations = load_breaker_registrations(config.tuya_device_file, client_factory=tuya_client_factory)
-    beve_config = _beve_config(config)
+    beve_config = _resolved_beve_config(config, session_factory)
     inverter_reference = beve_config.device_id if beve_config else None
     if provision and (inverter_reference or registrations):
         provision_hardware_devices(session_factory, registrations, inverter_reference=inverter_reference)
@@ -195,4 +195,40 @@ def _beve_config(config: Settings) -> BeveConfig | None:
         base_url=config.beve_base_url,
         time_zone=config.beve_time_zone,
         timeout_seconds=config.beve_timeout_seconds,
+    )
+
+
+def _resolved_beve_config(
+    config: Settings,
+    session_factory: sessionmaker[Session],
+) -> BeveConfig | None:
+    """Prefer verified persistent values when runtime encryption is enabled."""
+
+    # Environment-only development remains database-independent. A configured
+    # master key indicates that persistent onboarding configuration is active.
+    if config.runtime_master_key_path is None:
+        return _beve_config(config)
+
+    from apps.services.runtime_configuration_service import RuntimeConfigurationService
+
+    with session_factory() as session:
+        resolved = RuntimeConfigurationService(
+            session,
+            environment=config,
+        ).get_beve_configuration()
+    if not resolved.configured:
+        if len(resolved.missing_fields) == 4:
+            return None
+        missing = ", ".join(sorted(resolved.missing_fields))
+        raise RuntimeConfigurationError(
+            f"BEVE configuration is incomplete; missing: {missing}"
+        )
+    return BeveConfig(
+        base_url=resolved.base_url,
+        username=resolved.username,
+        password=resolved.password,
+        station_id=resolved.station_id,
+        device_id=resolved.device_id,
+        time_zone=resolved.time_zone,
+        timeout_seconds=resolved.timeout_seconds,
     )

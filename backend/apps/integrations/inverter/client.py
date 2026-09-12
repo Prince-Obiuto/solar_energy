@@ -54,6 +54,10 @@ class BeveIncompleteResponseError(BeveIntegrationError):
     """Raised when a response lacks the minimum envelope required for mapping."""
 
 
+class BeveDeviceNotFoundError(BeveIncompleteResponseError):
+    """Raised when the configured device is absent from the station device list."""
+
+
 class BeveConfig(BaseSettings):
     """Environment-backed BEVE connection and device configuration."""
 
@@ -174,7 +178,7 @@ class BeveClient:
             ) == self.config.device_id:
                 self._device_verified = True
                 return dict(device)
-        raise BeveIncompleteResponseError("Configured BEVE device was not returned")
+        raise BeveDeviceNotFoundError("Configured BEVE device was not returned")
 
     def fetch_current_telemetry(self) -> dict[str, Any]:
         """Fetch the latest read-only state envelope for the configured inverter."""
@@ -201,6 +205,13 @@ class BeveClient:
         """Compatibility alias for current telemetry reads."""
 
         return self.fetch_current_telemetry()
+
+    def close(self) -> None:
+        """Close the temporary/prolonged HTTP session when the owner is finished."""
+
+        close = getattr(self._api.session, "close", None)
+        if callable(close):
+            close()
 
     def _ensure_login(self) -> None:
         if not self._authenticated:

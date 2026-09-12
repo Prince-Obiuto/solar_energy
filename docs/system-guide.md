@@ -108,9 +108,8 @@ environment-driven recovery/headless administration option. Databases that
 already contain users are migrated with the administrator step marked configured;
 existing users and normal authentication are unchanged.
 
-This foundation exposes only setup status, setup-code verification, and the
-one-time administrator action. Verification and administrator attempts use the
-existing in-process security rate limiter. BEVE credentials, Tuya devices, device
+The setup API exposes status, setup-code verification, the one-time administrator
+action, and the token-authorized BEVE stage described below. Tuya setup, device
 verification, completion gating, and the React setup wizard belong to later
 setup phases and are not implemented here.
 
@@ -240,6 +239,45 @@ controls connectivity staleness and `BEVE_SOURCE_STALE_AFTER_SECONDS` controls
 source-data safety (default 900 seconds). A delayed source sample remains
 visible but cannot advance automatic load-management confirmation.
 
+### BEVE first-run setup
+
+After the administrator step, the operator supplies only the four values the
+production integration requires: username, password, station ID, and device ID.
+The base URL, `Africa/Lagos` timezone, and timeout continue to use the existing
+deployment settings and are not duplicated in the request.
+
+`POST /api/v1/setup/beve/test` accepts the setup code and those four values. It
+uses a short-lived instance of the same read-only `BeveClient`,
+`InverterAdapter`, and mapper used in production. Success requires login,
+station/device matching, a valid telemetry envelope, successful normalized
+mapping, and at least one supported telemetry signal. A zero output/PV value,
+`PV Not Connected`, `Battery Mode`, or `No Charging` is valid operating data and
+does not fail verification. The response contains only a small normalized
+summary; credentials, identifiers, tokens, sessions, and raw vendor data are
+never returned.
+
+`POST /api/v1/setup/beve` repeats the test before writing, encrypts username and
+password through the runtime-configuration service, stores station/device IDs
+as non-secret JSON values, reads the persisted values back, and verifies them a
+second time. A savepoint restores any previous known-good configuration when
+the final check fails. Only a successful final check sets
+`beve_configured=true`, advancing `GET /api/v1/setup/status` from `beve` to
+`tuya`. Both endpoints require an initialized, incomplete setup with an initial
+administrator and valid setup code. Repeated failures are bounded by the
+existing setup rate limiter.
+
+Failures use safe categories: `authentication_failed`, `device_not_found`,
+`network_error`, `timeout`, `malformed_response`, `configuration_invalid`, or
+`vendor_error`. Audit events record only the operation and result category.
+
+Configuration changes are activated by a normal backend restart. Runtime
+composition then resolves PostgreSQL values before environment fallbacks and
+creates its usual single collector. The setup endpoints never create a
+collector and do not hot-swap one, avoiding duplicate hardware polling. Existing
+environment-only development remains supported, but it is never copied into
+PostgreSQL implicitly; production onboarding requires explicit entry and
+verification.
+
 ## 10. Tuya breaker configuration
 
 The verified device is WIFl Smart Meter Pro / TMPH, category `znjdq`, protocol
@@ -272,19 +310,18 @@ Only verified control DPs 1, 9, 38, 40 and 41 are allowlisted. Calibration DPs
 5. Verify normalized read-only telemetry before exercising ADMIN controls.
 6. Test read-back verification and audit persistence under supervision.
 
-FastAPI lifespan composes the environment-backed read-only BEVE client, every
+FastAPI lifespan composes the resolved read-only BEVE client, every
 configured TinyTuya breaker, normalized services, persistence adapter, event
 publisher and collector. Development can start without hardware configuration;
 partially supplied BEVE settings fail with a sanitized configuration error.
 
-The Phase 2 runtime-configuration provider can resolve typed BEVE values with
+The runtime-configuration provider resolves typed BEVE values with
 per-field `persisted`, `environment`, or `missing` source metadata. A persisted
 value wins; an absent row falls back to the existing environment setting. A
 persisted encrypted row that cannot be decrypted fails explicitly and never
-falls back to an environment credential or gets overwritten. To avoid changing
-verified hardware startup before the later credential-verification phase,
-`build_application_runtime()` still uses its existing environment/device-file
-composition in this phase. No secrets are copied to PostgreSQL automatically.
+falls back to an environment credential or gets overwritten. When the external
+master-key path is configured, `build_application_runtime()` uses this provider
+at startup. No secrets are copied to PostgreSQL automatically.
 
 The collector uses monotonic start-to-start scheduling, bounded retries, and a
 per-source async lock. Breaker socket access also has a shared per-device lock:
@@ -298,7 +335,9 @@ debounced/coalesced so bursts result in at most one request in flight.
 
 Public: `GET /`, `GET /health`, `GET /api/v1/health`, `POST /auth/login`,
 `POST /auth/logout`, `GET /setup/status`, `POST /setup/verify`, and the
-one-time-token-protected `POST /setup/administrator` under `/api/v1`.
+one-time-token-protected `POST /setup/administrator`, `POST /setup/beve/test`,
+and `POST /setup/beve` under `/api/v1`. BEVE setup mutations additionally
+require the initialized, admin-configured, incomplete setup stage.
 
 Authenticated routes under `/api/v1`:
 
@@ -464,8 +503,7 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 - Request body limiting uses declared Content-Length; the reverse proxy must also
   enforce body and connection limits.
 - No automated frontend unit-test script is currently defined.
-- Runtime configuration is not yet wired into hardware composition; Phase 3
-  will do so together with narrowly scoped BEVE credential verification.
+- BEVE setup activation is restart-based; no live collector hot-swap is exposed.
 
 ## 22. Hardware-specific TODOs
 
@@ -475,7 +513,7 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
   offices breakers before operational use.
 - Verify BEVE session behavior, mapping, station/device selection, and time-zone
   handling against the deployed FiveStar inverter after vendor changes.
-- Adopt the typed persistent configuration provider during the scoped BEVE and
-  Tuya onboarding phases after credential/device verification succeeds.
+- Implement the scoped Tuya cloud/device onboarding stages without exposing
+  local keys or vendor credentials.
 - Test network loss/recovery, stale thresholds, and polling rates on the actual
   department LAN without hammering either hardware source.
