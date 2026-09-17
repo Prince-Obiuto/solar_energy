@@ -1,5 +1,11 @@
 name: ${COMPOSE_PROJECT_NAME:-solar-energy}
 
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-backend: &backend
   image: ${COMPOSE_PROJECT_NAME:-solar-energy}-backend:local
   build:
@@ -15,6 +21,7 @@ x-backend: &backend
   security_opt: [no-new-privileges:true]
   environment: &backend-environment
     APP_ENV: production
+    APP_HOSTNAME: ${APP_HOSTNAME:?Set APP_HOSTNAME in deployment/.env}
     TZ: Africa/Lagos
     API_V1_PREFIX: /api/v1
     ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Set ALLOWED_HOSTS in deployment/.env}
@@ -28,6 +35,7 @@ x-backend: &backend
     RUNTIME_MASTER_KEY_FILE: /run/solar-config/master.key
     TUYA_DEVICE_FILE: /run/solar-config/devices.json
     BACKUP_DESTINATION: /var/lib/solar-backups
+    BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     BEVE_TIME_ZONE: Africa/Lagos
     BEVE_POLL_INTERVAL_SECONDS: ${BEVE_POLL_INTERVAL_SECONDS:-30}
@@ -46,6 +54,7 @@ services:
   db:
     image: postgres:17-bookworm
     restart: unless-stopped
+    logging: *json-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
@@ -78,6 +87,7 @@ services:
   backend:
     <<: *backend
     restart: unless-stopped
+    logging: *json-logging
     stop_grace_period: 60s
     volumes:
       - type: bind
@@ -104,6 +114,7 @@ services:
       dockerfile: frontend/Dockerfile
     network_mode: host
     restart: unless-stopped
+    logging: *json-logging
     read_only: true
     tmpfs:
       - /var/cache/nginx:rw,nosuid,noexec,size=64m
@@ -112,6 +123,13 @@ services:
     # Root master binds port 80 and drops workers to nginx; no privileged mode.
     cap_add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
     security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${CERTIFICATE_DIRECTORY:?Set CERTIFICATE_DIRECTORY}
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       backend:
         condition: service_healthy

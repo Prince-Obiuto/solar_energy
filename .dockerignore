@@ -26,6 +26,8 @@
 !energy/siseli/__init__.py
 !energy/siseli/api.py
 !energy/siseli/const.py
+!energy/siseli/LICENSE
+!energy/siseli/UPSTREAM.md
 # Final denials also protect allowed source subdirectories.
 **/.env
 **/.env.*

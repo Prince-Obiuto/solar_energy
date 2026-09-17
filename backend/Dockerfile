@@ -19,7 +19,7 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/docker/entrypoint.py /opt/solar/entrypoint.py
 # Only the proven library; never the standalone reader, credentials, or captures.
 # Its existing import fallback resolves /opt/solar/energy without application changes.
-COPY energy/siseli/__init__.py energy/siseli/api.py energy/siseli/const.py /opt/solar/energy/siseli/
+COPY energy/siseli/__init__.py energy/siseli/api.py energy/siseli/const.py energy/siseli/LICENSE energy/siseli/UPSTREAM.md /opt/solar/energy/siseli/
 RUN PYTHONPATH=/opt/solar/energy python -c "from siseli.api import SolarOfThingsAPI; assert callable(SolarOfThingsAPI)"
 USER 10001:10001
 ENTRYPOINT ["python", "/opt/solar/entrypoint.py"]

@@ -32,6 +32,7 @@ def test_production_rejects_default_secret_and_wildcard_cors() -> None:
     for values in (
         {"app_env": "production", "jwt_secret_key": "development-only-change-me"},
         {"app_env": "production", "jwt_secret_key": "configured-secure-value", "cors_origins": "*"},
+        {"app_env": "production", "jwt_secret_key": "configured-secure-value", "allowed_hosts": "*"},
     ):
         try:
             Settings(_env_file=None, **values)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Solar Energy PostgreSQL backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/solar-energy/deployment/.env
+ExecStart=/opt/solar-energy/deployment/scripts/backup.sh
+PrivateTmp=true
+NoNewPrivileges=true

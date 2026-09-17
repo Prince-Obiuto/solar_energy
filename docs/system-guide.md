@@ -180,18 +180,18 @@ including WebSocket upgrades to FastAPI.
 
 ### Linux VM containers
 
-Phase 7 adds the [Compose deployment workflow](../deployment/README.md) for an
+Phase 8 adds the [Compose deployment workflow](../deployment/README.md) for an
 Ubuntu Server VM on Proxmox: PostgreSQL, a single backend worker/collector and
-Nginx serving the React build. Separate one-shot services run migrations,
-initialize the external runtime key, and initialize first-run setup. Normal
-restarts preserve Phase 6 activation behavior. The backend and Nginx use host
-networking for TinyTuya LAN discovery, while backend/database listeners remain
-loopback-only. PostgreSQL and runtime keys live outside container layers.
+Nginx serving the React build. Nginx redirects TCP 80 to TLS on TCP 443 and
+proxies REST/WebSocket traffic to loopback FastAPI. Backend and Nginx use host
+networking for TinyTuya LAN discovery; FastAPI and PostgreSQL remain
+loopback-only. PostgreSQL, certificate, runtime-key, backup and secret paths
+remain outside container layers.
 
-This phase provides HTTP container validation only. Real credential onboarding
-requires the subsequent HTTPS deployment phase; production Secure cookies remain
-enabled. Docker daemon access, the reviewed local `energy/siseli` dependency,
-and real LAN verification are prerequisites documented in the deployment guide.
+The verified `energy/siseli` source is now tracked with its upstream MIT license
+and provenance record, so clean source clones contain the exact reader used by
+the backend image. Real onboarding requires valid HTTPS, a matching certificate,
+Docker runtime validation, and the live LAN checklist in the deployment guide.
 
 ## 6. Environment variables
 
@@ -559,16 +559,20 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 
 ## 20. Production deployment
 
-- Use TLS and proxy HTTP/WebSocket traffic through the same trusted origin.
-- Set `APP_ENV=production`, a random JWT secret, exact CORS origins and allowed
-  hosts; keep environment-file permissions restrictive.
-- Run Alembic before starting the service.
-- Use dedicated OS/database accounts and writable telemetry/backup locations.
-- Install the systemd backup timer and monitor its status.
-- Configure log rotation, disk monitoring, PostgreSQL backup verification, and
-  reverse-proxy request/rate limits.
-- Do not use reload mode or expose PostgreSQL/Tuya devices publicly.
-- Validate hardware connectivity and a restore in a staging environment.
+- Use the tracked Compose deployment guide with a valid mounted certificate and
+  HTTPS same-origin REST/WebSocket proxy. TCP 80 redirects to 443.
+- Set `APP_ENV=production`, external random JWT/database secret files, explicit
+  `ALLOWED_HOSTS`, and restricted `/opt/solar-energy/{config,secrets,certs,backups}`
+  permissions. Wildcard hosts are rejected outside development.
+- Run `deployment/scripts/preflight.sh`, back up PostgreSQL, then run Alembic
+  before starting an upgraded backend.
+- Install the supplied nightly systemd backup timer only after reviewing it.
+- Docker limits long-running JSON logs to five 10 MiB files; monitor disk space,
+  backup inspection/restores, app health and certificate expiry.
+- Do not expose FastAPI or PostgreSQL on the LAN. Restrict TinyTuya UDP/TCP UFW
+  rules to the actual breaker subnet and preserve BEVE/Tuya Cloud egress.
+- Validate HTTPS, a disposable restore, and read-only hardware monitoring before
+  attempting any supervised breaker-control acceptance test.
 
 ## 21. Known limitations
 

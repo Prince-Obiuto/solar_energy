@@ -15,4 +15,4 @@ COPY --from=builder /build/dist /usr/share/nginx/html
 # Skip image entrypoint scripts that try to rewrite read-only configuration.
 ENTRYPOINT ["nginx"]
 CMD ["-g", "daemon off;"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD wget --no-check-certificate -q -O /dev/null https://127.0.0.1/healthz || exit 1

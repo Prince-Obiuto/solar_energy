@@ -1,15 +1,13 @@
-# Linux VM container deployment — Phase 7
+# Linux VM container deployment — Phase 8
 
 This Compose deployment targets Docker Engine and Compose on an Ubuntu Server
 VM on Proxmox. Run commands from the repository root unless indicated.
 The existing Python/Vite development workflow remains available.
 
-**This phase serves HTTP for container validation. Do not perform real production
-credential onboarding over plain HTTP.** Phase 8 must provide HTTPS before live
-BEVE/Tuya onboarding. Production authentication already uses Secure cookies;
-browser login/WebSocket sessions on a plain HTTP LAN IP cannot use those cookies.
-Keep that security policy enabled. Validate routing and unauthenticated behavior
-now; validate authenticated browser behavior after HTTPS is configured.
+This deployment requires a valid certificate before administrators enter setup,
+BEVE, Tuya, or login credentials. HTTP only redirects to HTTPS. The application
+keeps Secure, HttpOnly, SameSite=Lax authentication cookies; it does not weaken
+them for a plain-HTTP LAN test.
 
 ## Images and prerequisites
 
@@ -30,15 +28,13 @@ now; validate authenticated browser behavior after HTTPS is configured.
   networking arrangement. Do not scale backend workers or replicas: collector,
   WebSocket and temporary onboarding state are currently process-local.
 
-The proven `energy/siseli/{__init__.py,api.py,const.py}` library must exist in
-the build checkout. It is present in the current local tree but `/energy/` is
-Git-ignored. The backend Dockerfile copies only those three library files and
-checks that `SolarOfThingsAPI` imports without contacting the cloud. A fresh
-clone must receive the same reviewed library from the maintainer before a build;
-do not substitute an unrelated PyPI package or copy the whole hardware folder.
-No vendor authentication code is reimplemented or changed by this deployment.
-Establish a reviewed redistributable/versioned library artifact before installer
-packaging. Library protocol constants remain internal to that dependency.
+The proven reader is now a tracked vendor snapshot at `energy/siseli`, with its
+MIT license and exact provenance/hashes in `energy/siseli/UPSTREAM.md`. It is
+derived from Conexo-Casa's public Solar of Things Home Assistant integration;
+the retained source snapshot is the locally verified reader rather than an
+unreviewed build-time download or an unrelated PyPI package. The backend image
+copies only this snapshot and verifies that `SolarOfThingsAPI` imports without
+contacting the cloud. No vendor authentication code is changed by deployment.
 
 Both Dockerfiles intentionally use the **repository root context**. The root
 `.dockerignore` is authoritative and allowlists application source, migrations,
@@ -61,8 +57,9 @@ REST uses `/api/v1`; WebSocket uses browser-derived `ws[s]://<origin>/api/v1/ws/
 Vite's existing `/api` proxy continues to serve local development.
 
 Required Compose variables: `POSTGRES_DB`, `POSTGRES_USER`, `ALLOWED_HOSTS`,
-`CONFIG_DIRECTORY`, `BACKUP_DIRECTORY`, `POSTGRES_PASSWORD_FILE`,
-`JWT_SECRET_KEY_FILE`. `POSTGRES_PORT` defaults to 5432; choose an unused port
+`CONFIG_DIRECTORY`, `BACKUP_DIRECTORY`, `CERTIFICATE_DIRECTORY`,
+`POSTGRES_PASSWORD_FILE`, `JWT_SECRET_KEY_FILE`, and `APP_HOSTNAME`.
+`POSTGRES_PORT` defaults to 5432; choose an unused port
 for disposable tests. Project name and polling intervals are configurable in
 the template. Other application settings retain their existing defaults;
 add deliberate non-secret environment overrides under the shared backend
@@ -79,6 +76,7 @@ On the VM, prepare external directories (administrative privileges required):
 sudo install -d -m 0700 -o 10001 -g 10001 /opt/solar-energy/config
 sudo install -d -m 0700 -o 10001 -g 10001 /opt/solar-energy/backups
 sudo install -d -m 0700 -o root -g root /opt/solar-energy/secrets
+sudo install -d -m 0750 -o root -g root /opt/solar-energy/certs
 ```
 
 Create separate cryptographically random database and JWT secret files without
@@ -114,6 +112,19 @@ configuration/image metadata contains paths rather than password values.
 Do not dump process environments. PostgreSQL uses `POSTGRES_PASSWORD_FILE`.
 Changing this file alone does not rotate a password in an existing database.
 
+Install the institutionally supplied certificate as
+`/opt/solar-energy/certs/fullchain.pem` and private key as
+`/opt/solar-energy/certs/privkey.pem`. The web service mounts this directory
+read-only at `/etc/nginx/certs`; neither file is copied into an image or Git.
+The private key should be root-owned and mode `0600`; the certificate may be
+root-owned and mode `0644`. `APP_HOSTNAME` must match a certificate SAN. A
+certificate for a hostname does not validate when users browse a bare LAN IP,
+unless that IP is explicitly in its SAN. HSTS is enabled only in the HTTPS
+production configuration, so do not point this Compose configuration at a
+temporary/self-signed laboratory certificate. ACME can be added later if the
+chosen hostname is publicly resolvable and its inbound validation path is
+approved; this phase deliberately does not add an untested Certbot service.
+
 The separate runtime encryption key lives at
 `/opt/solar-energy/config/master.key`, mounted as
 `/run/solar-config/master.key`. It is created as UID/GID 10001, mode `0600`.
@@ -128,10 +139,11 @@ secondary backup destination can be added as a distinct mount and existing
 ## Build, initialize and start
 
 These are deliberate operations, not an installer. With a configured template,
-external paths and the reviewed Siseli library present:
+external paths, valid certificate, and the tracked Siseli snapshot present:
 
 ```bash
 docker compose --env-file deployment/.env -f deployment/compose.yaml config --quiet
+deployment/scripts/preflight.sh
 docker compose --env-file deployment/.env -f deployment/compose.yaml build
 docker compose --env-file deployment/.env -f deployment/compose.yaml run --rm --no-deps runtime-key-init
 docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --wait db
@@ -170,11 +182,12 @@ Use Check Activation in the browser. Persisted configuration is authoritative;
 failed runtime composition keeps activation pending. HTTP process health alone
 does not assert that hardware is reachable or activation succeeded.
 
-## Network, health and permissions
+## HTTPS, network, firewall and permissions
 
 | Listener | Interface | Purpose |
 |---|---|---|
-| TCP 80 | all host IPv4/IPv6 interfaces | Nginx SPA, REST, WebSocket |
+| TCP 80 | all host IPv4/IPv6 interfaces | Nginx HTTPS redirect only |
+| TCP 443 | all host IPv4/IPv6 interfaces | Nginx TLS SPA, REST, WebSocket |
 | TCP 8000 | 127.0.0.1 only | FastAPI, no Docker port publishing |
 | TCP configured DB port (5432 default) | 127.0.0.1 only | mapped PostgreSQL |
 
@@ -188,9 +201,14 @@ Host firewall, VLANs, VM NIC/bridge and Wi-Fi client isolation must still allow
 the required traffic. Outbound DNS/HTTPS for BEVE/Siseli and temporary Tuya Cloud
 remains available. This phase makes no claim of a successful live LAN scan.
 
-Nginx keeps full `/api/v1` paths, forwards the original host/client IP/protocol,
-and supports Upgrade/Connection for `/api/v1/ws/energy`. It discards untrusted
-incoming forwarding chains; Uvicorn trusts proxy headers only from loopback.
+Nginx redirects `http://<host>/…` with HTTP 308 to `https://<host>/…`, then
+keeps full `/api/v1` paths and forwards the validated host/client IP/protocol.
+It sets `X-Forwarded-Proto: https`; Uvicorn is already configured to trust proxy
+headers only from loopback. FastAPI's `ALLOWED_HOSTS` remains the authority for
+accepted hostnames and rejects wildcards outside development. The Nginx default
+server does not replace that application boundary. The proxy supports
+Upgrade/Connection for `/api/v1/ws/energy` and discards untrusted incoming
+forwarding chains.
 Ordinary API reads have 60-second timeouts; setup requests have 240 seconds to
 cover bounded scanning/verification; WebSockets have 90-second idle timeouts
 against the existing 20-second heartbeat. SPA `try_files` fallback supports
@@ -213,7 +231,9 @@ writable cache/PID tmpfs. PostgreSQL retains the official image initialization
 permissions and writable data volume; blindly making it read-only would break
 database startup. Logs go to stdout/stderr; proxy logs exclude query strings,
 cookies, headers and bodies. Normal app access logging uses the existing safe
-application middleware. Docker log rotation is left for the operations phase.
+application middleware. Docker JSON logs for database, backend and web are
+bounded to five 10 MiB files each. Setup initialization keeps the `none` driver
+because it prints a one-time code only to the attached operator terminal.
 
 `devices.json` is never baked into an image and is not needed for production
 onboarding. If maintaining an existing development fallback, place the reviewed
@@ -221,6 +241,32 @@ file in the protected config directory, mode `0600`, owner 10001. The existing
 read-only directory mount makes `/run/solar-config/devices.json` available;
 finalized setup still requires persisted configuration and does not accept that
 fallback as activation proof.
+
+### UFW policy
+
+Do not apply firewall changes from Compose or application startup. First confirm
+the management subnet and active SSH port so SSH is not locked out. For an SSH
+service on port 22 and a department network where the TinyTuya devices use
+`10.20.30.0/24`, an operator may adapt these commands:
+
+```bash
+sudo ufw allow from <management-subnet> to any port 22 proto tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow from 10.20.30.0/24 to any port 6666 proto udp
+sudo ufw allow from 10.20.30.0/24 to any port 6667 proto udp
+sudo ufw allow from 10.20.30.0/24 to any port 7000 proto udp
+sudo ufw allow out to 10.20.30.0/24 port 6668 proto tcp
+sudo ufw enable
+sudo ufw status numbered
+```
+
+The ports above come from the installed TinyTuya 1.20.0 source: discovery
+listens on UDP 6666, 6667 and 7000; protocol 3.5 discovery sends to UDP 7000;
+local device commands/status use TCP 6668. Host networking allows this traffic
+without privileged mode. Keep the scope restricted to the actual breaker subnet
+and preserve outbound DNS/HTTPS for BEVE/Siseli and temporary Tuya Cloud
+onboarding. Never allow PostgreSQL or FastAPI through UFW from the LAN.
 
 ## Smoke checks and operations
 
@@ -231,12 +277,13 @@ development database/config. Inspect the rendered configuration with `config
 
 ```bash
 docker compose --env-file deployment/.env -f deployment/compose.yaml ps -a
-curl --fail http://127.0.0.1/healthz
-curl --fail http://127.0.0.1/api/v1/health
-curl --fail http://127.0.0.1/api/v1/setup/status
-curl --fail --output /dev/null http://127.0.0.1/setup
-curl --fail --output /dev/null http://127.0.0.1/login
-curl --fail --output /dev/null http://127.0.0.1/energy
+curl -I http://"$APP_HOSTNAME"/
+curl --fail --cacert /opt/solar-energy/certs/fullchain.pem "https://$APP_HOSTNAME/healthz"
+curl --fail --cacert /opt/solar-energy/certs/fullchain.pem "https://$APP_HOSTNAME/api/v1/health"
+curl --fail --cacert /opt/solar-energy/certs/fullchain.pem "https://$APP_HOSTNAME/api/v1/setup/status"
+curl --fail --output /dev/null "https://$APP_HOSTNAME/setup"
+curl --fail --output /dev/null "https://$APP_HOSTNAME/login"
+curl --fail --output /dev/null "https://$APP_HOSTNAME/energy"
 docker compose --env-file deployment/.env -f deployment/compose.yaml exec web nginx -t
 docker compose --env-file deployment/.env -f deployment/compose.yaml logs --tail 100 backend web
 docker compose --env-file deployment/.env -f deployment/compose.yaml stop
@@ -256,6 +303,118 @@ confirms its authorization boundary, but is not proof of an authenticated 101
 upgrade. After Phase 8 HTTPS, validate a real authenticated browser WebSocket,
 normal login, setup completion/restart, dashboard and TinyTuya read-only LAN
 discovery. Do not test breaker switching as a deployment smoke check.
+
+## Backups, retention and restore
+
+Use `deployment/scripts/backup.sh` for the deployment-level database archive.
+It runs `pg_dump` inside the PostgreSQL container, writes a custom compressed
+archive to a same-directory `.partial` file, verifies non-zero output, then
+atomically renames it to `solar_energy_YYYY-MM-DD_HHMMSS.dump`. It never copies
+the live PostgreSQL volume and never passes a password on the command line.
+It reads only non-secret database name/user settings from `deployment/.env` and
+uses the database container's local authentication.
+
+```bash
+cd /opt/solar-energy
+deployment/scripts/backup.sh
+docker compose --env-file deployment/.env -f deployment/compose.yaml exec -T db \
+  pg_restore --list < /opt/solar-energy/backups/solar_energy_<timestamp>.dump
+```
+
+Retention is a simple bounded daily policy: `BACKUP_RETENTION_DAYS` defaults to
+30. Deletion is limited to one level of the configured backup directory and to
+the `solar_energy_*.dump` naming pattern; it never recursively removes a path.
+The application-level backup job continues to record backup history and alerts,
+but the deployment script is suitable for the system timer below.
+
+A recoverable installation is a set, not merely a dump:
+
+1. the PostgreSQL archive;
+2. the matching `/opt/solar-energy/config/master.key`;
+3. deployment `.env` and the separately protected PostgreSQL/JWT secret files;
+4. `fullchain.pem` and `privkey.pem` unless an institutional certificate system
+   manages and backs them up separately.
+
+The database contains encrypted runtime configuration. Without the matching
+master key it cannot decrypt saved BEVE/Tuya values; the master key without the
+database does not restore users, state, or configuration. Keep at least one
+restricted offline copy of the key. Do not email, commit, or include it in a
+world-readable archive, and never print it during backup or restore.
+
+Test a restore into a separately named database before relying on it. Stop only
+backend/web writers, keep PostgreSQL running, and state the target explicitly:
+
+```bash
+docker compose --env-file deployment/.env -f deployment/compose.yaml stop backend web
+# Create and authorize an explicit non-production restore target according to
+# local PostgreSQL policy, then inspect/restore the chosen archive into it:
+docker compose --env-file deployment/.env -f deployment/compose.yaml exec -T db \
+  pg_restore --clean --if-exists --no-owner --dbname=<explicit-test-database> \
+  < /opt/solar-energy/backups/solar_energy_<timestamp>.dump
+```
+
+For recovery to the real deployment, restore the same key, certificate and
+protected deployment files before starting backend. Run `alembic upgrade head`
+after restoring an older archive, then start backend, check activation/login,
+and finally start web. Do not overwrite an active production database until the
+target, archive, rollback plan, and downtime are explicitly approved.
+
+Install, review, and enable the supplied systemd timer only on the VM:
+
+```bash
+sudo install -m 0644 deployment/systemd/solar-energy-backup.service /etc/systemd/system/
+sudo install -m 0644 deployment/systemd/solar-energy-backup.timer /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/solar-energy-backup.service /etc/systemd/system/solar-energy-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now solar-energy-backup.timer
+sudo systemctl list-timers solar-energy-backup.timer
+```
+
+The timer is nightly at 02:00 with a bounded random delay and persists missed
+runs. It is not enabled automatically by this repository.
+
+## Reboot, upgrades and recovery
+
+Enable Docker once on the VM:
+
+```bash
+sudo systemctl enable --now docker
+```
+
+After the project has first been started with `docker compose up -d`, the
+`unless-stopped` policy restarts database, backend and web when Docker returns
+after a reboot. The migration helper is intentionally one-shot; during upgrades
+run migrations explicitly before recreating services:
+
+```bash
+deployment/scripts/backup.sh
+docker compose --env-file deployment/.env -f deployment/compose.yaml build
+docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --wait db
+docker compose --env-file deployment/.env -f deployment/compose.yaml run --rm migrate
+docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --wait backend web
+```
+
+Never automatically downgrade. Verify HTTPS health, normal login, dashboard,
+inverter source status, breaker status, and WebSocket updates after each upgrade.
+A cloud or breaker outage is application-level degraded state, not proof that a
+healthy container should be replaced.
+
+| Symptom | Safe diagnosis | Safe recovery |
+|---|---|---|
+| Backend unhealthy | `docker compose … ps`, `logs --tail 100 backend`, HTTPS `/api/v1/health` | Check DB/migration state and mounted key, then restart backend after correcting the stated issue. |
+| PostgreSQL unhealthy | `docker compose … ps`, `logs --tail 100 db`, `exec db pg_isready` | Check volume space and logs; do not delete the volume. |
+| Missing master key or corrupt runtime config | Backend log has a safe composition error; setup status shows activation pending | Restore the matching protected key/config from backup; do not regenerate a key over an existing installation. |
+| BEVE unavailable | Dashboard marks cloud data stale/unavailable | Check Internet/DNS and Siseli status; keep last known data and do not reconfigure the inverter. |
+| Breaker offline | Device/area health reports offline | Check power, LAN/VLAN/Wi-Fi isolation and UDP/TCP firewall scope; use read-only verification first. |
+| Finalized setup still pending | `/api/v1/setup/status` reports activation required | Inspect backend composition error, fix persisted configuration/key, then restart backend. |
+| TLS certificate missing/expired | Web does not become healthy or browser rejects HTTPS | Install a valid matching certificate/key with restricted permissions, run Nginx validation, then recreate web. |
+
+The live VM acceptance sequence is: verify certificate, open HTTPS `/setup`,
+complete administrator and read-only BEVE/Tuya onboarding, match breakers by
+exact ID, perform read-only verification, finalize setup, restart backend,
+confirm activation, sign in, validate dashboard/device health and WebSocket
+updates. Only after monitoring is stable may authorized staff use the existing
+read-back/audited breaker-control workflow with connected loads made safe first.
 
 ## Validation recorded in this working session
 

@@ -108,6 +108,8 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_SECRET_KEY must be configured outside development")
             if "*" in self.cors_origin_list:
                 raise ValueError("Wildcard CORS origins are not allowed outside development")
+            if not self.allowed_host_list or "*" in self.allowed_host_list:
+                raise ValueError("ALLOWED_HOSTS must name explicit hosts outside development")
         return self
 
     @model_validator(mode="after")

@@ -38,11 +38,18 @@ dist-ssr
 **/tinytuya.json
 **/tuya-raw.json
 /backend/test.py
-/energy/
+# The read-only Siseli dependency is a reviewed MIT-licensed vendor snapshot.
+# Keep standalone experiments and captures out of Git while tracking the package.
+/energy/*
+!/energy/siseli/
+!/energy/siseli/**
+/energy/siseli/__pycache__/
 /backend/backups/
 *.partial
 **/master.key
 *.runtime-key
+*.pem
+*.key
 
 .venv/
 

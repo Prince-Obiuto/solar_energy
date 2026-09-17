@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Solar Energy PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=solar-energy-backup.service
+
+[Install]
+WantedBy=timers.target
