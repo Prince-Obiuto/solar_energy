@@ -416,23 +416,38 @@ confirm activation, sign in, validate dashboard/device health and WebSocket
 updates. Only after monitoring is stable may authorized staff use the existing
 read-back/audited breaker-control workflow with connected loads made safe first.
 
-## Validation recorded in this working session
+## Versioned release installer
 
-Docker CLI/Compose were inspected. The Docker daemon socket is not accessible
-to the session user, and non-interactive sudo requires a password. Container
-builds, PostgreSQL migrations inside Docker, Nginx runtime validation and live
-container smoke tests must be executed on an accessible Docker host before
-calling this deployment validated. No real BEVE/Tuya onboarding was performed.
-The final task report records local tests and Compose schema validation results.
+Phase 9 packages only allowlisted application files into
+`dist/solar-energy-system-v1.0.0.tar.gz` with `dist/SHA256SUMS`. Build with
+`python3 scripts/build_release.py`; verify with `sha256sum -c SHA256SUMS` before
+copying or extracting the archive. The archive carries its own
+`CONTENT_SHA256SUMS` and manifest, which `install.sh` checks before changing the
+host. The installer does not require Git or fetch source code.
 
-Recorded validation for this implementation:
+On a **fresh** supported Ubuntu Server VM, run `./install.sh --check --hostname
+<actual-hostname> --cert <fullchain.pem> --key <privkey.pem>` first, then run
+the same command with `sudo` and without `--check`. An operator-supplied valid
+certificate and matching private key are required; no self-signed production
+mode or automatic ACME flow is included. The installer uses the existing
+Phase-8 sibling layout at `/opt/solar-energy/{backend,frontend,energy,deployment}`
+because `compose.yaml` builds from `..`. External `config/`, `secrets/`,
+`certs/`, `backups/`, and `release/` remain alongside that source.
 
-- Focused container-entrypoint/setup-finalization/runtime tests: 40 passed.
-- Full backend suite on a fresh migrated disposable SQLite database: 298 passed,
-  4 existing dependency/datetime deprecation warnings.
-- Frontend `npm run lint` and `npm run build`: passed, 712 modules built.
-- `docker compose --env-file deployment/.env.example -f deployment/compose.yaml
-  config --quiet`: passed (Compose 5.3.1).
-- `docker compose ... build`: attempted, blocked by Docker socket permission
-  denial before image build. These results do not establish image/runtime health.
-- `git diff --check`: passed.
+Installation reuses a healthy Docker Engine/Compose or installs them from the
+official Docker Ubuntu apt repository. It builds the reviewed images, starts
+PostgreSQL, runs migrations, initializes the runtime master key, starts the
+backend and HTTPS web, displays the one-time setup code directly on the
+terminal, and enables the Compose and nightly backup systemd units. It refuses
+an existing installation or database volume. It does not collect hardware
+credentials, finalize the setup wizard, configure UFW, or switch breakers.
+Complete `/setup` only over trusted HTTPS.
+
+No automatic upgrade or uninstall script is shipped. For upgrades, preserve
+`/opt/solar-energy/{config,secrets,certs,backups}`, back up PostgreSQL and the
+master key, verify the new release, build its images, run `alembic upgrade head`
+through the migration service, restart backend/web, then validate health and
+application behavior. Do not run `install.sh` over an existing installation.
+The manual backup/restore, firewall, and recovery instructions above still
+apply. Full clean-VM, backup/restore, and hardware acceptance are separate
+release gates; a successful source build alone does not prove them.

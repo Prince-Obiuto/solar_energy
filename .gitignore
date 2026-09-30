@@ -64,3 +64,6 @@ dist-ssr
 **/jwt_secret
 *.dump
 *.sql.gz
+
+# Generated release archives and checksums.
+/dist/

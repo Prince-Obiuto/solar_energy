@@ -1,0 +1,17 @@
+[Unit]
+Description=Solar Energy Management System Compose deployment
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/solar-energy/deployment
+ExecStart=/usr/bin/docker compose --env-file /opt/solar-energy/deployment/.env -f /opt/solar-energy/deployment/compose.yaml up -d --no-build db backend web
+ExecStop=/usr/bin/docker compose --env-file /opt/solar-energy/deployment/.env -f /opt/solar-energy/deployment/compose.yaml stop web backend db
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

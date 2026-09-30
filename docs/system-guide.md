@@ -559,6 +559,12 @@ in [backend/docs/database-backups.md](../backend/docs/database-backups.md).
 
 ## 20. Production deployment
 
+- Build the versioned 1.0.0 source archive with `python3 scripts/build_release.py`,
+  verify `dist/SHA256SUMS`, and run the extracted `install.sh` only on a fresh
+  supported Ubuntu Server VM. See the root README and deployment guide.
+- The installer requires a real hostname and matching certificate/key, checks
+  release contents, starts Compose services, and prints the one-time setup code
+  directly to the terminal; it never collects BEVE/Tuya credentials.
 - Use the tracked Compose deployment guide with a valid mounted certificate and
   HTTPS same-origin REST/WebSocket proxy. TCP 80 redirects to 443.
 - Set `APP_ENV=production`, external random JWT/database secret files, explicit
