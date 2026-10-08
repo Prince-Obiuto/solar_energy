@@ -26,6 +26,8 @@ from apps.schemas.setup import (
     TuyaConfigurationStatusResponse,
     TuyaDeviceConfigurationRequest,
     TuyaDeviceConfigurationResponse,
+    TuyaManualIpRequest,
+    TuyaManualIpResponse,
     TuyaOnboardingSessionRequest,
     TuyaScanResponse,
 )
@@ -81,6 +83,9 @@ def get_tuya_setup_client_factory() -> Callable[[TuyaDeviceConfig], object]:
             max_attempts=settings.telemetry_retry_attempts,
             socket_timeout_seconds=settings.tuya_socket_timeout_seconds,
             retry_delay_seconds=settings.telemetry_retry_delay_seconds,
+            # Setup must verify the submitted/selected address itself, not
+            # silently rediscover a different host after a failed read.
+            discovery=lambda **_kwargs: None,
         )
 
     return factory
@@ -408,6 +413,41 @@ def tuya_configuration_status(
             detail="Tuya setup authorization failed",
         ) from None
     setup_limiter.reset(key)
+    return result
+
+
+@router.post("/tuya/manual-ip", response_model=TuyaManualIpResponse, response_model_exclude_none=True)
+def verify_tuya_manual_ip(
+    payload: TuyaManualIpRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+    runtime_configuration: RuntimeConfigurationService = Depends(get_runtime_configuration_service),
+    onboarding_store: TuyaOnboardingStore = Depends(get_tuya_onboarding_store),
+    cloud_gateway: TinyTuyaCloudGateway = Depends(get_tuya_cloud_gateway),
+    lan_discovery: TinyTuyaLanDiscovery = Depends(get_tuya_lan_discovery),
+    client_factory: Callable[[TuyaDeviceConfig], object] = Depends(get_tuya_setup_client_factory),
+) -> TuyaManualIpResponse:
+    key = _rate_limit(request, "tuya-manual-ip")
+    try:
+        result = _tuya_setup_service(
+            session, runtime_configuration, onboarding_store,
+            cloud_gateway, lan_discovery, client_factory,
+        ).verify_manual_ip(payload)
+    except SetupLockedError:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE, detail="Installation setup is unavailable",
+        ) from None
+    except SetupStateError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Tuya setup authorization failed",
+        ) from None
+    except TuyaScanInProgressError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A Tuya LAN verification is already in progress",
+        ) from None
+    if result.success:
+        setup_limiter.reset(key)
     return result
 
 

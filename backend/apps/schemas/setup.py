@@ -5,7 +5,7 @@ from typing import Literal
 
 import unicodedata
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 SetupStep = Literal["initialize", "administrator", "beve", "tuya", "devices", "confirm"]
@@ -141,6 +141,8 @@ TuyaSetupErrorCategory = Literal[
     "malformed_response",
     "unsupported_device",
     "configuration_invalid",
+    "ip_address_invalid",
+    "ip_address_not_allowed",
 ]
 
 
@@ -190,6 +192,27 @@ class TuyaScanResponse(BaseModel):
     matched: list[TuyaMatchedDeviceResponse] = Field(default_factory=list)
     cloud_only: list[str] = Field(default_factory=list)
     lan_only_count: int = 0
+
+
+class TuyaManualIpRequest(TuyaOnboardingSessionRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    device_ref: str = Field(min_length=16, max_length=256)
+    ip_address: str = Field(min_length=1, max_length=45)
+
+
+class TuyaManualIpResponse(BaseModel):
+    success: bool
+    device_ref: str
+    ip_address: str | None = None
+    protocol_version: str | None = None
+    online: bool = False
+    relay_state: bool | None = None
+    voltage_v: float | None = None
+    current_a: float | None = None
+    power_w: float | None = None
+    category: TuyaSetupErrorCategory | None = None
+    message: str | None = None
 
 
 class TuyaDeviceSelection(BaseModel):

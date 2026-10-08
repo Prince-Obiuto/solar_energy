@@ -338,8 +338,24 @@ concurrent sessions. `POST /api/v1/setup/tuya/scan` explicitly invokes
 `deviceScan(..., poll=False, byID=True)` with a bounded scan duration. Cloud and
 LAN records are matched only by exact Tuya Device ID. An unmatched cloud device
 gets at most one bounded `find_device(dev_id=...)` fallback attempt; names and IP
-addresses are never identities. Concurrent scans are rejected rather than
-overlapped.
+addresses are never identities. If keyed candidates remain unmatched and
+`TUYA_DISCOVERY_NETWORKS` is configured, `scanner.devices` then force-scans only
+those approved CIDRs with the temporary cloud IDs/keys supplied in memory,
+`discover=False`, `verbose=False`, `poll=False`, and exact-ID filtering. No
+`devices.json` or snapshot is written. Vendor scan debug logging is suppressed
+for the scan thread because it can contain keys. Results must have an exact
+candidate ID and an address inside an approved CIDR. The existing scan response
+and safe error categories apply to both discovery paths.
+
+`TUYA_DISCOVERY_NETWORKS` is a comma-separated list of explicit RFC1918 IPv4
+CIDRs. Each must be /24 or narrower, with at most 8 CIDRs and 256 total addresses
+(counting network/broadcast addresses). Invalid, public, loopback, link-local,
+multicast, IPv6, and overly broad ranges fail configuration validation. Blank
+disables routed scanning. The production template configures `10.10.20.0/27`;
+operators must approve their own networks. UDP broadcasts do not cross routed
+subnets; the VM needs routed TCP 6668 access to the approved IoT networks.
+Concurrent scans are rejected rather than overlapped. Runtime still uses direct
+TinyTuya TCP after encrypted setup; these CIDRs apply only to onboarding.
 
 `POST /api/v1/setup/tuya/devices` accepts one or more opaque candidate refs with
 operator-assigned friendly names and areas. Each selection must have a cloud

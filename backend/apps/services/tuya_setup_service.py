@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from apps.core.config import Settings, settings
+from apps.core.config import Settings, parse_tuya_discovery_networks, settings
 from apps.integrations.tuya.adapter import TuyaBreakerAdapter
 from apps.integrations.tuya.client import (
     TuyaClient,
@@ -21,16 +22,19 @@ from apps.integrations.tuya.client import (
     TuyaTimeoutError,
 )
 from apps.integrations.tuya.device_loader import parse_breaker_configs
+from apps.integrations.tuya.constants import DEFAULT_PROTOCOL_VERSION
 from apps.integrations.tuya.onboarding import (
     TinyTuyaCloudGateway,
     TinyTuyaLanDiscovery,
     TuyaCloudAuthenticationError,
     TuyaCloudConfig,
     TuyaCloudConfigurationError,
+    TuyaCloudDevice,
     TuyaCloudDeviceFetchError,
     TuyaCloudMalformedResponseError,
     TuyaCloudNetworkError,
     TuyaCloudTimeoutError,
+    TuyaLanDevice,
     TuyaScanError,
     TuyaScanTimeoutError,
 )
@@ -45,6 +49,8 @@ from apps.schemas.setup import (
     TuyaDeviceConfigurationResponse,
     TuyaDeviceVerificationResponse,
     TuyaMatchedDeviceResponse,
+    TuyaManualIpRequest,
+    TuyaManualIpResponse,
     TuyaScanResponse,
     TuyaSetupErrorCategory,
 )
@@ -83,6 +89,8 @@ _MESSAGES: dict[TuyaSetupErrorCategory, str] = {
     "malformed_response": "The selected breaker returned malformed telemetry.",
     "unsupported_device": "The selected device is not compatible with the breaker profile.",
     "configuration_invalid": "The selected Tuya device configuration is invalid.",
+    "ip_address_invalid": "Enter a valid private IPv4 device address.",
+    "ip_address_not_allowed": "The device IP is outside approved Tuya networks.",
 }
 
 
@@ -171,6 +179,8 @@ class TuyaSetupService:
         if not _TUYA_SCAN_LOCK.acquire(blocking=False):
             raise TuyaScanInProgressError("A Tuya LAN scan is already in progress")
         try:
+            for candidate in onboarding.candidates.values():
+                candidate.lan = None
             try:
                 lan_devices = self.lan_discovery.scan(
                     maxretry=self.environment.tuya_onboarding_scan_maxretry
@@ -181,6 +191,7 @@ class TuyaSetupService:
                 return self._scan_failure("no_devices_found")
 
             fallback_count = 0
+            matches = {}
             for candidate in onboarding.candidates.values():
                 matched = lan_devices.get(candidate.device_id)
                 if matched is not None and matched.device_id != candidate.device_id:
@@ -194,7 +205,30 @@ class TuyaSetupService:
                     matched = self.lan_discovery.find_exact(candidate.device_id)
                     if matched is not None and matched.device_id != candidate.device_id:
                         matched = None
-                candidate.lan = matched
+                if matched is not None:
+                    matches[candidate.device_id] = matched
+
+            unmatched = [
+                TuyaCloudDevice(device_id=candidate.device_id, local_key=candidate.local_key)
+                for candidate in onboarding.candidates.values()
+                if candidate.device_id not in matches and candidate.local_key is not None
+            ]
+            if unmatched and self.environment.tuya_discovery_networks:
+                try:
+                    routed = self.lan_discovery.scan_routed(
+                        networks=self.environment.tuya_discovery_networks,
+                        devices=unmatched,
+                    )
+                except TuyaScanTimeoutError:
+                    return self._scan_failure("scan_timeout")
+                except TuyaScanError:
+                    return self._scan_failure("no_devices_found")
+                for candidate in unmatched:
+                    matched = routed.get(candidate.device_id)
+                    if matched is not None and matched.device_id == candidate.device_id:
+                        matches[candidate.device_id] = matched
+            for candidate in onboarding.candidates.values():
+                candidate.lan = matches.get(candidate.device_id)
 
             matched_candidates = [
                 candidate for candidate in onboarding.candidates.values()
@@ -239,6 +273,95 @@ class TuyaSetupService:
             devices_verified=state.devices_verified,
             configured_device_count=len(devices),
             devices=devices,
+        )
+
+    def verify_manual_ip(self, payload: TuyaManualIpRequest) -> TuyaManualIpResponse:
+        """Verify one cloud candidate at an approved routed LAN address, read-only."""
+
+        SetupService(self.session).authorize_tuya_stage(payload.setup_code)
+        if not _TUYA_SCAN_LOCK.acquire(blocking=False):
+            raise TuyaScanInProgressError("A Tuya LAN scan is already in progress")
+        try:
+            return self._verify_manual_ip_locked(payload)
+        finally:
+            _TUYA_SCAN_LOCK.release()
+
+    def _verify_manual_ip_locked(self, payload: TuyaManualIpRequest) -> TuyaManualIpResponse:
+        token = payload.onboarding_session.get_secret_value()
+        try:
+            onboarding = self.onboarding_store.get(token)
+        except TuyaOnboardingSessionError:
+            return self._manual_failure(payload.device_ref, "onboarding_session_invalid")
+        candidate = onboarding.candidates.get(payload.device_ref)
+        if candidate is None:
+            return self._manual_failure(payload.device_ref, "device_id_mismatch")
+        if candidate.local_key is None:
+            return self._manual_failure(payload.device_ref, "unsupported_device")
+        if candidate.lan is not None:
+            return self._manual_failure(payload.device_ref, "configuration_invalid")
+
+        try:
+            address = ipaddress.IPv4Address(payload.ip_address.strip())
+        except ipaddress.AddressValueError:
+            return self._manual_failure(payload.device_ref, "ip_address_invalid")
+        if not address.is_private or any((
+            address.is_loopback, address.is_link_local, address.is_multicast,
+            address.is_reserved, address.is_unspecified,
+        )):
+            return self._manual_failure(payload.device_ref, "ip_address_invalid")
+        networks = parse_tuya_discovery_networks(self.environment.tuya_discovery_networks)
+        if not any(
+            address in network and (
+                network.prefixlen >= 31 or address not in (network.network_address, network.broadcast_address)
+            )
+            for network in networks
+        ):
+            return self._manual_failure(payload.device_ref, "ip_address_not_allowed")
+
+        try:
+            config = TuyaDeviceConfig(
+                device_id=candidate.device_id,
+                friendly_name=candidate.name or "Tuya breaker",
+                area="Pending setup",
+                local_key=candidate.local_key,
+                ip_address=address,
+                protocol_version=DEFAULT_PROTOCOL_VERSION,
+                enabled=True,
+            )
+        except ValidationError:
+            return self._manual_failure(payload.device_ref, "configuration_invalid")
+        verification = self._verify_local(payload.device_ref, config)
+        if not verification.verified:
+            return self._manual_failure(payload.device_ref, verification.category or "local_connection_failed")
+
+        candidate.lan = TuyaLanDevice(
+            device_id=candidate.device_id,
+            ip_address=str(address),
+            protocol_version=DEFAULT_PROTOCOL_VERSION,
+            product_id=candidate.product_id,
+        )
+        self._audit("Tuya manual IP verified", result="success")
+        self.session.flush()
+        return TuyaManualIpResponse(
+            success=True,
+            device_ref=payload.device_ref,
+            ip_address=str(address),
+            protocol_version=DEFAULT_PROTOCOL_VERSION,
+            online=True,
+            relay_state=verification.relay_state,
+            voltage_v=verification.voltage_v,
+            current_a=verification.current_a,
+            power_w=verification.power_w,
+            message="Breaker telemetry verified.",
+        )
+
+    def _manual_failure(
+        self, device_ref: str, category: TuyaSetupErrorCategory,
+    ) -> TuyaManualIpResponse:
+        self._audit("Tuya manual IP verification failed", result=category)
+        self.session.flush()
+        return TuyaManualIpResponse(
+            success=False, device_ref=device_ref, category=category, message=_MESSAGES[category],
         )
 
     def configure_devices(
@@ -380,6 +503,7 @@ class TuyaSetupService:
             max_attempts=self.environment.telemetry_retry_attempts,
             socket_timeout_seconds=self.environment.tuya_socket_timeout_seconds,
             retry_delay_seconds=self.environment.telemetry_retry_delay_seconds,
+            discovery=lambda **_kwargs: None,
         )
 
     def _verify_local(

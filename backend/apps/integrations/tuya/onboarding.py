@@ -3,14 +3,42 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
+import threading
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 import tinytuya
+from tinytuya import scanner
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+
+from apps.core.config import parse_tuya_discovery_networks
+
+
+@contextmanager
+def _quiet_scanner_logs():
+    """Vendor DEBUG records include keys; suppress this scan thread's records."""
+
+    thread_id = threading.get_ident()
+
+    class ScanLogFilter(logging.Filter):
+        def filter(self, record):
+            return record.thread != thread_id
+
+    scan_filter = ScanLogFilter()
+    loggers = [logging.getLogger(name) for name in list(logging.Logger.manager.loggerDict)
+               if name == "tinytuya" or name.startswith("tinytuya.")]
+    for logger in loggers:
+        logger.addFilter(scan_filter)
+    try:
+        yield
+    finally:
+        for logger in loggers:
+            logger.removeFilter(scan_filter)
 
 
 class TuyaOnboardingIntegrationError(Exception):
@@ -199,9 +227,59 @@ class TinyTuyaLanDiscovery:
         *,
         scan: ScanFunction = tinytuya.deviceScan,
         find: FindFunction = tinytuya.find_device,
+        force_scan: ScanFunction = scanner.devices,
     ) -> None:
         self.scan_function = scan
         self.find_function = find
+        self.force_scan_function = force_scan
+
+    def scan_routed(
+        self, *, networks: str, devices: list[TuyaCloudDevice],
+    ) -> dict[str, TuyaLanDevice]:
+        """Scan only approved CIDRs using temporary cloud keys, without files."""
+
+        temporary_devices = []
+        try:
+            approved = parse_tuya_discovery_networks(networks)
+            if not approved:
+                return {}
+            temporary_devices = [
+                {"id": device.device_id, "key": device.local_key.get_secret_value(), "name": ""}
+                for device in devices[:100] if device.local_key is not None
+            ]
+            if not temporary_devices:
+                return {}
+            wanted_ids = {device["id"] for device in temporary_devices}
+            with _quiet_scanner_logs():
+                response = self.force_scan_function(
+                    forcescan=[str(network) for network in approved],
+                    verbose=False,
+                    discover=False,
+                    assume_yes=True,
+                    tuyadevices=temporary_devices,
+                    byID=True,
+                    wantids=sorted(wanted_ids),
+                    color=False,
+                    poll=False,
+                    show_timer=False,
+                )
+            if not isinstance(response, Mapping):
+                raise TuyaScanError("Tuya LAN scan returned an invalid response.")
+            return {
+                device_id: device
+                for device_id, device in self._normalize_many(response).items()
+                if device_id in wanted_ids
+                and isinstance(address := ipaddress.ip_address(device.ip_address), ipaddress.IPv4Address)
+                and any(address in network for network in approved)
+            }
+        except (socket.timeout, TimeoutError):
+            raise TuyaScanTimeoutError("Tuya LAN scan timed out.") from None
+        except Exception:
+            raise TuyaScanError("Tuya LAN scan failed.") from None
+        finally:
+            for device in temporary_devices:
+                device.clear()
+            temporary_devices.clear()
 
     def scan(self, *, maxretry: int) -> dict[str, TuyaLanDevice]:
         try:

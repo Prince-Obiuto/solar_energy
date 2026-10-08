@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+import ipaddress
 from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -8,6 +9,35 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def parse_tuya_discovery_networks(value: str) -> tuple[ipaddress.IPv4Network, ...]:
+    """Accept explicit RFC1918 CIDRs only, with a small aggregate scan budget."""
+
+    if not value.strip():
+        return ()
+    entries = value.split(",")
+    if len(entries) > 8:
+        raise ValueError("TUYA_DISCOVERY_NETWORKS allows at most 8 CIDRs")
+    private_ranges = tuple(ipaddress.ip_network(cidr) for cidr in (
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    ))
+    networks = []
+    for entry in entries:
+        if "/" not in entry:
+            raise ValueError("TUYA_DISCOVERY_NETWORKS requires explicit CIDRs")
+        network = ipaddress.ip_network(entry.strip(), strict=True)
+        if not isinstance(network, ipaddress.IPv4Network) or not any(
+            network.subnet_of(private) for private in private_ranges
+        ):
+            raise ValueError("TUYA_DISCOVERY_NETWORKS requires private RFC1918 IPv4 CIDRs")
+        if network.num_addresses > 256:
+            raise ValueError("TUYA_DISCOVERY_NETWORKS allows networks no broader than /24")
+        if network not in networks:
+            networks.append(network)
+    if sum(network.num_addresses for network in networks) > 256:
+        raise ValueError("TUYA_DISCOVERY_NETWORKS allows at most 256 addresses in total")
+    return tuple(networks)
 
 
 class Settings(BaseSettings):
@@ -41,6 +71,7 @@ class Settings(BaseSettings):
     tuya_onboarding_session_ttl_seconds: int = Field(default=900, ge=60, le=3600)
     tuya_onboarding_max_sessions: int = Field(default=10, ge=1, le=100)
     tuya_onboarding_scan_maxretry: int = Field(default=8, ge=1, le=30)
+    tuya_discovery_networks: str = ""
     telemetry_persist_interval_seconds: float = Field(default=60, gt=0)
     energy_max_integration_gap_seconds: float = Field(default=900, gt=0)
     device_stale_after_seconds: float = Field(default=90, gt=0)
@@ -87,6 +118,11 @@ class Settings(BaseSettings):
         """Return configured CORS origins as a normalized list."""
 
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @field_validator("tuya_discovery_networks")
+    @classmethod
+    def validate_tuya_discovery_networks(cls, value: str) -> str:
+        return ",".join(str(network) for network in parse_tuya_discovery_networks(value))
 
     @property
     def allowed_host_list(self) -> list[str]:

@@ -62,6 +62,8 @@ export default function TuyaSetupStep({ configured, onAdvance }) {
   const requireRestart = useSetupStore((state) => state.requireRestart);
   const [cloudForm, setCloudForm] = useState(EMPTY_CLOUD_FORM);
   const [selections, setSelections] = useState({});
+  const [knownIps, setKnownIps] = useState({});
+  const [manualResults, setManualResults] = useState({});
   const [error, setError] = useState(null);
   const [operation, setOperation] = useState(null);
 
@@ -82,6 +84,8 @@ export default function TuyaSetupStep({ configured, onAdvance }) {
         return;
       }
       setCloudForm(EMPTY_CLOUD_FORM);
+      setKnownIps({});
+      setManualResults({});
       setCloudSession({ onboardingSession: result.onboarding_session, candidates: result.devices });
     } catch (caughtError) {
       setError(setupRequestError(caughtError, "Tuya Cloud devices could not be retrieved."));
@@ -97,11 +101,18 @@ export default function TuyaSetupStep({ configured, onAdvance }) {
     try {
       const result = await setupService.scanTuyaLan(setupCode, onboardingSession);
       if (!result.success) {
-        setError(setupResultMessage(result.category, result.message));
-        if (result.category === "onboarding_session_invalid") expireCloudSession();
+        if (result.category === "onboarding_session_invalid") {
+          expireCloudSession();
+          setError(setupResultMessage(result.category, result.message));
+        } else if (["no_devices_found", "scan_timeout"].includes(result.category)) {
+          setScanResult({ matched: [], cloud_only: candidates.map((candidate) => candidate.device_ref), lan_only_count: 0 });
+        } else {
+          setError(setupResultMessage(result.category, result.message));
+        }
         return;
       }
       setScanResult(result);
+      setManualResults({});
       setSelections(Object.fromEntries(result.matched.map((device) => [
         device.device_ref,
         { selected: false, friendly_name: device.name || "", area: "" },
@@ -118,6 +129,42 @@ export default function TuyaSetupStep({ configured, onAdvance }) {
     ...current,
     [ref]: { ...current[ref], [field]: value },
   }));
+
+  const verifyKnownIp = async (ref) => {
+    setError(null);
+    setOperation(`manual-${ref}`);
+    setManualResults((current) => ({ ...current, [ref]: null }));
+    try {
+      const result = await setupService.verifyTuyaManualIp(
+        setupCode, onboardingSession, ref, (knownIps[ref] || "").trim(),
+      );
+      if (!result.success) {
+        setManualResults((current) => ({ ...current, [ref]: setupResultMessage(result.category, result.message) }));
+        if (result.category === "onboarding_session_invalid") expireCloudSession();
+        return;
+      }
+      const candidate = candidates.find((device) => device.device_ref === ref);
+      setScanResult({
+        ...scanResult,
+        matched: [...scanResult.matched, {
+          device_ref: ref,
+          name: candidate?.name || null,
+          ip_address: result.ip_address,
+          protocol_version: result.protocol_version,
+          local_configuration_available: true,
+        }],
+        cloud_only: scanResult.cloud_only.filter((deviceRef) => deviceRef !== ref),
+      });
+      setSelections((current) => ({
+        ...current,
+        [ref]: { selected: false, friendly_name: candidate?.name || "", area: "" },
+      }));
+    } catch (caughtError) {
+      setManualResults((current) => ({ ...current, [ref]: setupRequestError(caughtError, "The breaker could not be verified at this IP.") }));
+    } finally {
+      setOperation(null);
+    }
+  };
 
   const verifyDevices = async (event) => {
     event.preventDefault();
@@ -234,7 +281,21 @@ export default function TuyaSetupStep({ configured, onAdvance }) {
             {scanResult.cloud_only.length > 0 && (
               <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <h4 className="font-semibold text-amber-900">Cloud devices not found on LAN</h4>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">{scanResult.cloud_only.map((ref) => <li key={ref}>{candidateFor(ref)?.name || "Cloud device"}</li>)}</ul>
+                <div className="mt-3 space-y-4">{scanResult.cloud_only.map((ref) => (
+                  <div className="rounded-lg border border-amber-200 bg-white p-3" key={ref}>
+                    <p className="font-medium text-gray-900">{candidateFor(ref)?.name || "Cloud device"}</p>
+                    <p className="mt-1 text-sm text-amber-800">Device not discovered automatically</p>
+                    {candidateFor(ref)?.local_configuration_available ? (
+                      <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row sm:items-end">
+                        <div className="w-full min-w-0 sm:max-w-xs">
+                          <Input autoComplete="off" label="Known device IP" name={`known-ip-${ref}`} onChange={(event) => setKnownIps((current) => ({ ...current, [ref]: event.target.value }))} placeholder="IPv4 address" type="text" value={knownIps[ref] || ""} />
+                        </div>
+                        <Button disabled={operation !== null || !(knownIps[ref] || "").trim()} onClick={() => verifyKnownIp(ref)} type="button" variant="outline">{operation === `manual-${ref}` ? "Verifying…" : "Verify known IP"}</Button>
+                      </div>
+                    ) : <p className="mt-2 text-sm text-amber-800">Local key unavailable for this candidate.</p>}
+                    {manualResults[ref] && <p aria-live="polite" className="mt-2 text-sm text-rose-700">{manualResults[ref]}</p>}
+                  </div>
+                ))}</div>
               </div>
             )}
             <div className="mt-6 flex flex-wrap gap-3">

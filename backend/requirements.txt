@@ -15,3 +15,4 @@ pytest-asyncio
 tinytuya==1.20.0
 requests
 pycryptodome
+psutil

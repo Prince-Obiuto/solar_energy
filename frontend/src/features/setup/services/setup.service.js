@@ -66,6 +66,20 @@ const setupService = {
     return data;
   },
 
+  async verifyTuyaManualIp(setupCode, onboardingSession, deviceRef, ipAddress) {
+    const { data } = await axiosClient.post(
+      "/setup/tuya/manual-ip",
+      {
+        setup_code: setupCode,
+        onboarding_session: onboardingSession,
+        device_ref: deviceRef,
+        ip_address: ipAddress,
+      },
+      DEVICE_VERIFICATION_REQUEST,
+    );
+    return data;
+  },
+
   async configureTuyaDevices(setupCode, onboardingSession, devices) {
     const { data } = await axiosClient.post(
       "/setup/tuya/devices",

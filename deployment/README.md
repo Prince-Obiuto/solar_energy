@@ -375,6 +375,54 @@ runs. It is not enabled automatically by this repository.
 
 ## Reboot, upgrades and recovery
 
+### Routed Tuya discovery patch on an existing installation
+
+The routed discovery and manual-IP onboarding patch needs backend and web image
+rebuilds and container recreation. Preserve
+the current PostgreSQL volume, `deployment/.env`, and `config/`, `secrets/`,
+`certs/`, and `backups/`. Take the existing protected backup before updating.
+Copy the reviewed changed backend source and `deployment/compose.yaml` into the
+existing installation, preserving that sibling layout. Edit the existing
+`deployment/.env` to add/update this non-secret setting (do not replace the file
+with the example):
+
+```dotenv
+TUYA_DISCOVERY_NETWORKS=10.10.20.0/27
+```
+
+This enables force scanning of the approved routed IoT CIDR after ordinary UDP
+discovery and exact-ID fallback. If a cloud candidate is still unmatched, setup
+can verify its known IPv4 address within the same approved ranges using the
+server-held Device ID and local key. This is read-only and does not operate the
+relay. Comma-separated RFC1918 IPv4 CIDRs are accepted,
+at most 8 ranges, each /24 or narrower, at most 256 total addresses. Blank
+disables this fallback. Ensure VM routing and firewall policy permit TCP 6668
+to those ranges. The backend uses host networking and receives the setting
+through Compose.
+
+On the running server:
+
+```bash
+cd /opt/solar-energy
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml config --quiet
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml build backend web
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --no-deps --wait backend web
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml exec -T backend \
+  python -c 'from apps.core.config import settings; print(settings.tuya_discovery_networks)'
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml ps
+```
+
+No schema changes are included. Do not rerun `install.sh`, database initialization,
+`runtime-key-init`, or `setup-init`; keep the existing secrets and master key.
+`restart backend` alone would not pick up a rebuilt image or changed environment.
+Verify HTTPS `/api/v1/health` using the current trusted certificate/hostname.
+Container recreation clears temporary onboarding sessions: re-enter Tuya Cloud
+credentials in the existing setup wizard, scan again, and enter a Known device
+IP for each unmatched cloud candidate. A successful read adds it to the normal
+selection list; select breakers and run the existing read-only verification.
+Confirm all expected breakers are verified before final encrypted persistence.
+No relay switching is needed for validation.
+
 Enable Docker once on the VM:
 
 ```bash
