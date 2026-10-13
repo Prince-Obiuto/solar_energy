@@ -20,6 +20,7 @@ from apps.models.persistence import (
 from apps.schemas.dashboard import (
     ComponentHealth, DashboardArea, DashboardAreas, DashboardSnapshot, DashboardSystem, OverallHealth,
 )
+from apps.services.battery_runtime_service import BatteryRuntimeEstimator
 
 
 class DashboardService:
@@ -33,6 +34,7 @@ class DashboardService:
         self.session = session
         self.collector = collector
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.battery_runtime_estimator = BatteryRuntimeEstimator(clock=self.clock)
 
     async def get_dashboard(self) -> DashboardSnapshot:
         cache = await self.collector.get_snapshot() if self.collector else CollectorSnapshot()
@@ -42,6 +44,9 @@ class DashboardService:
         system = self._system(cache, areas, data_status)
         return DashboardSnapshot(
             system=system, inverter=inverter, battery=battery, solar=solar, grid=grid,
+            battery_runtime=self.battery_runtime_estimator.estimate(
+                cache.inverter, data_status, cache.inverter_load_samples,
+            ),
             data_status=data_status, areas=areas,
         )
 

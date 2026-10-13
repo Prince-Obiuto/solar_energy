@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import Field
 
@@ -49,10 +50,24 @@ class DashboardArea(DomainModel):
     last_seen: datetime | None = None
 
 
+class BatteryRuntimeEstimate(DomainModel):
+    """Read-only nominal-capacity estimate, never a guaranteed battery duration."""
+
+    state: Literal["battery", "not_on_battery", "unavailable"] = "unavailable"
+    estimated_minutes_remaining: int | None = Field(default=None, ge=0)
+    estimated_hours_remaining: float | None = Field(default=None, ge=0)
+    current_soc_percent: float | None = None
+    load_power_w: float | None = None
+    calculation_load_w: float | None = None
+    calculated_at: datetime | None = None
+    source_timestamp: datetime | None = None
+
+
 class DashboardSnapshot(DomainModel):
     system: DashboardSystem
     inverter: InverterTelemetryStatus = Field(default_factory=InverterTelemetryStatus)
     battery: BatteryTelemetryStatus = Field(default_factory=BatteryTelemetryStatus)
+    battery_runtime: BatteryRuntimeEstimate = Field(default_factory=BatteryRuntimeEstimate)
     solar: SolarTelemetryStatus = Field(default_factory=SolarTelemetryStatus)
     grid: GridTelemetryStatus = Field(default_factory=GridTelemetryStatus)
     data_status: DataStatus = Field(default_factory=lambda: DataStatus(

@@ -90,6 +90,23 @@ def test_login_cookie_authenticates_current_user(auth_context) -> None:
     assert current.json()["role"] == "admin"
 
 
+def test_login_and_current_user_work_through_approved_hostname_and_lan_ip(auth_context) -> None:
+    client, _ = auth_context
+    for host in ("solar-energy.ift.internal", "10.10.10.6"):
+        response = client.post(
+            "/api/v1/auth/login",
+            headers={"Host": host},
+            json={"email": "student@example.test", "password": PASSWORD},
+        )
+        assert response.status_code == 200
+        current = client.get(
+            "/api/v1/auth/me",
+            headers={"Host": host, "Authorization": f"Bearer {response.json()['access_token']}"},
+        )
+        assert current.status_code == 200
+        assert current.json()["role"] == "student"
+
+
 def test_invalid_login_is_generic_and_audited(auth_context) -> None:
     client, factory = auth_context
     response = login(client, UserRole.STUDENT, "wrong-password")

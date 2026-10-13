@@ -1,12 +1,13 @@
 """Collector-first dashboard aggregation and partial-outage tests."""
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from apps.integrations.inverter import InverterAdapter, MockBeveClient
+from apps.integrations.inverter import InverterAdapter, MockBeveClient, VERIFIED_BEVE_RESPONSE
 from apps.jobs.energy_collector import CollectorSnapshot, DeviceCollectionState
 from apps.models import (
     BreakerDevice, BreakerStatus, ConnectivityType, DataFreshness, DataSource,
@@ -129,6 +130,34 @@ async def test_partial_breaker_outage_keeps_other_area_and_last_known_inverter(d
     assert result.system.system_status is OverallHealth.DEGRADED
     assert result.system.components["breakers"].value == "degraded"
     assert result.inverter.status == "Battery Mode"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_estimates_only_fresh_verified_battery_runtime(dashboard_db) -> None:
+    raw = deepcopy(VERIFIED_BEVE_RESPONSE)
+    raw["timestamp"] = NOW.isoformat()
+    raw["inverter"]["output_power_w"] = 820
+    raw["battery"]["soc"] = 61
+    inverter = InverterAdapter().to_telemetry(raw)
+    source = DeviceCollectionState(
+        device_id="inverter", online=None, stale=False,
+        last_seen=NOW, last_successful_update=NOW,
+        connectivity_type=ConnectivityType.CLOUD, data_source=DataSource.BEVE_CLOUD,
+        source_status=SourceStatus.CONNECTED, data_freshness=DataFreshness.LIVE,
+        source_timestamp=NOW,
+    )
+    collector = FakeCollector(CollectorSnapshot(inverter=inverter, devices={"inverter": source}))
+    with dashboard_db() as session:
+        live = await DashboardService(session, collector, clock=lambda: NOW).get_dashboard()
+        source.source_status = SourceStatus.UNREACHABLE
+        collector.snapshot.devices["inverter"] = source
+        failed = await DashboardService(session, collector, clock=lambda: NOW).get_dashboard()
+    assert live.battery_runtime.state == "battery"
+    assert live.battery_runtime.estimated_minutes_remaining == 223
+    assert live.battery_runtime.load_power_w == 820
+    assert failed.inverter.status == "Battery Mode"  # last known physical state retained
+    assert failed.battery_runtime.state == "unavailable"
+    assert failed.battery_runtime.estimated_minutes_remaining is None
 
 
 @pytest.mark.asyncio

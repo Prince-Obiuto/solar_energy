@@ -375,6 +375,50 @@ runs. It is not enabled automatically by this repository.
 
 ## Reboot, upgrades and recovery
 
+### Battery runtime and LAN-IP access hot update
+
+Keep the existing PostgreSQL volume, `deployment/.env`, and external
+`config/`, `secrets/`, `certs/`, and `backups/` unchanged. The first-run setup
+state and encrypted hardware configuration do not need to be reset. After
+copying the reviewed source files into the existing `/opt/solar-energy` tree,
+edit the *existing* `deployment/.env` (do not replace it with the example):
+
+```dotenv
+APP_HOSTNAME=solar-energy.ift.internal
+ALLOWED_HOSTS=solar-energy.ift.internal,10.10.10.6,localhost,127.0.0.1
+BATTERY_NOMINAL_CAPACITY_KWH=5.0
+BATTERY_RUNTIME_MIN_LOAD_W=50
+BATTERY_RUNTIME_SMOOTHING_WINDOW_SECONDS=300
+```
+
+The explicit `ALLOWED_HOSTS` list is checked by FastAPI after Nginx forwards
+the original Host header. It must contain the canonical hostname and any
+approved direct-IP access path; do not use `*`. The dashboard runtime is an
+estimate from fresh BEVE “Battery Mode” plus “Discharging Status,” SOC, and
+inverter output active power. It uses nominal 5 kWh capacity, a five-sample
+median over the last five source minutes, and a configurable minimum load. It
+does not use GridPower direction, inverter writes, an assumed efficiency, or
+missing/zero power as a synthetic load.
+
+```bash
+cd /opt/solar-energy
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml config --quiet
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml build backend web
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml up -d --no-deps --wait backend web
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml ps
+sudo docker compose --env-file deployment/.env -f deployment/compose.yaml exec -T web nginx -t
+```
+
+There is no schema migration or reinstall for this update; do not run
+`runtime-key-init` or `setup-init`. For clients without local DNS, use
+`https://10.10.10.6` temporarily. A certificate without an IP-address SAN may
+still produce a browser TLS warning; this is independent of Host validation.
+Do not replace the certificate automatically. The permanent name-resolution
+fix is a MikroTik/local DNS record:
+`solar-energy.ift.internal -> 10.10.10.6`. A future administrator-issued
+certificate may include both `DNS:solar-energy.ift.internal` and
+`IP:10.10.10.6`; a private/self-signed CA must still be trusted by clients.
+
 ### Routed Tuya discovery patch on an existing installation
 
 The routed discovery and manual-IP onboarding patch needs backend and web image

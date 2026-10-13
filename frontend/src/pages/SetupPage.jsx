@@ -5,6 +5,7 @@ import ErrorState from "../components/ui/ErrorState";
 import Loader from "../components/ui/Loader";
 import { useAuth } from "../app/providers/AuthContext";
 import { APP_ROUTES } from "../app/router/routes";
+import { completedSetupDestination } from "../app/router/installationState";
 import AdministratorSetupStep from "../features/setup/components/AdministratorSetupStep";
 import BeveSetupStep from "../features/setup/components/BeveSetupStep";
 import SetupAuthorization from "../features/setup/components/SetupAuthorization";
@@ -44,10 +45,14 @@ export default function SetupPage() {
       </main>
     );
   }
-  if (!status?.setup_required) {
+  if (status?.setup_completed !== true && !(status?.setup_completed === false && status?.setup_required === true)) {
+    return <main className="grid min-h-screen place-items-center bg-gray-50 p-4"><div className="w-full max-w-xl"><ErrorState description="The server returned an invalid installation status. Setup remains locked until this is resolved." onRetry={() => refreshStatus({ force: true }).catch(() => undefined)} title="Unable to verify installation" /></div></main>;
+  }
+  if (status.setup_completed) {
     if (status?.activation_required) return <SetupActivation />;
-    if (auth.status === "loading") return <div className="grid min-h-screen place-items-center"><Loader label="Opening application…" /></div>;
-    return <Navigate replace to={auth.status === "authenticated" ? APP_ROUTES.dashboard : APP_ROUTES.login} />;
+    const destination = completedSetupDestination(auth.status);
+    if (destination === "loading") return <div className="grid min-h-screen place-items-center"><Loader label="Opening application…" /></div>;
+    return <Navigate replace to={destination === "dashboard" ? APP_ROUTES.dashboard : APP_ROUTES.login} />;
   }
 
   const content = !authorized ? (

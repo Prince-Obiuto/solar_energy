@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import threading
 import time
@@ -170,6 +171,24 @@ def build_collector(
         clock=clock,
         sleep=sleep,
     )
+
+
+@pytest.mark.asyncio
+async def test_collector_keeps_bounded_unique_source_samples_for_runtime_smoothing() -> None:
+    clock = MutableClock()
+    first = deepcopy(VERIFIED_BEVE_RESPONSE)
+    first["inverter"]["output_power_w"] = 500
+    second = deepcopy(first)
+    second["timestamp"] = (clock.now + timedelta(seconds=30)).isoformat()
+    second["inverter"]["output_power_w"] = 1000
+    collector = build_collector(clock, FakeBeveClient(first, first, second), [])
+    assert await collector.collect_inverter_once()
+    assert await collector.collect_inverter_once()
+    clock.advance(30)
+    assert await collector.collect_inverter_once()
+    samples = (await collector.get_snapshot()).inverter_load_samples
+    assert [sample.output_power_w for sample in samples] == [500, 1000]
+    assert [sample.timestamp for sample in samples] == [clock.now - timedelta(seconds=30), clock.now]
 
 
 @pytest.mark.asyncio

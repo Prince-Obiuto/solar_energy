@@ -17,6 +17,14 @@ export function formatKilowattHours(value) {
   return formatted == null ? "--" : `${formatted} kWh`;
 }
 
+export function formatRuntimeMinutes(value) {
+  if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return "--";
+  const minutes = Math.round(Number(value));
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return hours ? `${hours} h ${remaining} min` : `${remaining} min`;
+}
+
 export function formatPercentage(value) {
   return value == null ? "--" : `${value}%`;
 }

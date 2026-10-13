@@ -280,3 +280,44 @@ def test_setup_api_rate_limits_verification_and_locks_completed_mutation(
         assert "not-returned" not in locked.text
     finally:
         app.dependency_overrides.clear()
+
+
+def test_completed_installation_accepts_explicit_hostname_and_ip_but_not_unknown_host(
+    setup_context,
+) -> None:
+    with setup_context() as session:
+        state = SetupService(session).get_state()
+        state.setup_completed = True
+        state.completed_at = datetime.now(UTC)
+        state.runtime_activation_pending = False
+        state.setup_token_hash = None
+        session.commit()
+
+    def override_db():
+        with setup_context() as session:
+            yield session
+            session.commit()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app, base_url="https://testserver")
+    try:
+        for host in ("solar-energy.ift.internal", "10.10.10.6"):
+            headers = {"Host": host}
+            response = client.get("/api/v1/setup/status", headers=headers)
+            assert response.status_code == 200
+            assert response.json() == {
+                "setup_required": False,
+                "setup_completed": True,
+                "activation_required": False,
+            }
+            assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+            assert client.post(
+                "/api/v1/setup/administrator",
+                headers=headers,
+                json={"setup_code": "invalid", "email": "new@example.test", "password": PASSWORD},
+            ).status_code == 410
+        assert client.get(
+            "/api/v1/setup/status", headers={"Host": "untrusted.example.test"},
+        ).status_code == 400
+    finally:
+        app.dependency_overrides.clear()

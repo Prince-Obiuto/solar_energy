@@ -5,7 +5,7 @@ import os
 # Settings are instantiated while importing apps.main. Environment overrides
 # must therefore be installed before any application import in this process.
 os.environ["APP_ENV"] = "test"
-os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver"
+os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver,solar-energy.ift.internal,10.10.10.6"
 os.environ["TUYA_DEVICE_FILE"] = "/tmp/solar-energy-pytest-no-hardware.json"
 
 import pytest

@@ -5,11 +5,14 @@ let reconnectTimer = null;
 let attempts = 0;
 let manuallyStopped = false;
 
-function websocketUrl() {
-  const configured = import.meta.env.VITE_WS_URL;
+export function getEnergyWebSocketUrl(location, configured = null) {
   if (configured) return configured;
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/v1/ws/energy`;
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${location.host}/api/v1/ws/energy`;
+}
+
+function websocketUrl() {
+  return getEnergyWebSocketUrl(window.location, import.meta.env.VITE_WS_URL);
 }
 
 function publishStatus(status) {

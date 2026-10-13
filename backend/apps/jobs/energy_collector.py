@@ -83,10 +83,20 @@ class DeviceCollectionState(DomainModel):
     last_failure_category: str | None = None
 
 
+class InverterLoadSample(DomainModel):
+    """One verified, normalized BEVE source sample for runtime smoothing."""
+
+    timestamp: datetime
+    output_power_w: float | None = None
+    inverter_status: str | None = None
+    battery_status: str | None = None
+
+
 class CollectorSnapshot(DomainModel):
     """Secret-free in-memory snapshot consumed by later API/WebSocket layers."""
 
     inverter: InverterTelemetry | None = None
+    inverter_load_samples: list[InverterLoadSample] = Field(default_factory=list)
     breakers: dict[str, BreakerDevice] = Field(default_factory=dict)
     devices: dict[str, DeviceCollectionState] = Field(default_factory=dict)
 
@@ -312,6 +322,15 @@ class EnergyCollector:
             logger.debug("BEVE telemetry poll completed duration_seconds=%.3f", self._monotonic() - started)
             async with self._state_lock:
                 self._snapshot.inverter = telemetry
+                samples = self._snapshot.inverter_load_samples
+                if not samples or telemetry.timestamp > samples[-1].timestamp:
+                    samples.append(InverterLoadSample(
+                        timestamp=telemetry.timestamp,
+                        output_power_w=telemetry.inverter.output_power_w,
+                        inverter_status=telemetry.inverter.status,
+                        battery_status=telemetry.battery.status,
+                    ))
+                    self._snapshot.inverter_load_samples = samples[-5:]
                 self._record_inverter_success_locked(source_id, telemetry.timestamp, completed_at)
                 inverter_source_state = self._snapshot.devices[source_id].model_copy(deep=True)
                 breaker_cache = self._snapshot.breakers.copy()

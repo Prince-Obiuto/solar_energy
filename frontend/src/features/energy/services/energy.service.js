@@ -48,6 +48,7 @@ export function mapEnergySnapshot(snapshot, todaySummary = null) {
     capturedAt: dataStatus.last_successful_poll_at || dataStatus.last_successful_update || snapshot.system?.last_update || snapshot.captured_at,
     solar: { power: wattsToKilowatts(snapshot.solar?.total_power_w), status: snapshot.solar?.connected, pv1Voltage: snapshot.solar?.pv1_voltage, pv1Power: wattsToKilowatts(snapshot.solar?.pv1_power_w), pv2Voltage: snapshot.solar?.pv2_voltage, pv2Power: wattsToKilowatts(snapshot.solar?.pv2_power_w) },
     battery: { percentage: snapshot.battery?.soc, voltage: snapshot.battery?.voltage, charging: batteryStatus.includes("charging") && !batteryStatus.includes("discharging"), state: snapshot.battery?.status, power: wattsToKilowatts(snapshot.battery?.power_w) },
+    batteryRuntime: snapshot.battery_runtime || { state: "unavailable", estimated_minutes_remaining: null },
     inverter: { status: snapshot.inverter?.status, ratedPower: wattsToKilowatts(snapshot.inverter?.rated_power_w), outputPower: wattsToKilowatts(snapshot.inverter?.output_power_w), loadPercentage: snapshot.inverter?.load_percentage, dataStatus },
     grid: { connected: gridConnected, power: wattsToKilowatts(snapshot.grid?.power_w), voltage: snapshot.grid?.voltage, frequency: snapshot.grid?.frequency },
     loads: { totalPower, zones: areaPower },
